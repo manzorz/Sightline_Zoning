@@ -1,3 +1,5 @@
+rm(list = ls())
+
 library(sf)
 library(dplyr)
 library(ggplot2)
@@ -70,11 +72,12 @@ lots_with_rules <- lots_joined %>%
   )
 
 # =========================================================================
-# 4 & 5. ENVIRONMENTAL INTEGRATION & MASTER PARCEL CAPACITY PIPELINE
+# 4. ENVIRONMENT INTEGRATION & EXTRACT GEOMETRIC HAZARD SHAPE MASKS
 # =========================================================================
 output_dir <- "C:\\Users\\gmann\\Documents\\ClarkCountyZoning"
 cache_file <- file.path(output_dir, "processed_lots_capacity.rds")
 
+# Check if the fully consolidated capacity model file already exists on your disk
 if (file.exists(cache_file)) {
   
   cat("Found fully consolidated capacity model file. Loading cache instantly...\n")
@@ -82,35 +85,10 @@ if (file.exists(cache_file)) {
   
 } else {
   
-  cat("No cache found. Initiating multi-layer raster/vector constraint matrix calculation...\n")
+  cat("No cache found. Processing 12 vector constraint layers simultaneously...\n")
   
   # -------------------------------------------------------------------------
-  # STEP A: RASTER WETLAND INTERSECTION PROCESSING
-  # -------------------------------------------------------------------------
-  gdb_path <- "C:/Users/gmann/Downloads/SEA_BIO_WetlandsInventory/Wetlands_Inventory.gdb"
-  wetlands_raster <- rast(gdb_path, lyrs = "wetlands_inventory_2016")
-  
-  if (crs(wetlands_raster, proj = TRUE) != crs(lots_with_rules, proj = TRUE)) {
-    wetlands_raster <- project(wetlands_raster, crs(lots_with_rules), method = "near")
-  }
-  
-  cat("Extracting wetland raster fractions across parcel boundaries...\n")
-  extracted_wetlands <- exact_extract(wetlands_raster, lots_with_rules, include_cols = "prop_id")
-  
-  lot_wetland_summary <- bind_rows(extracted_wetlands) %>%
-    mutate(
-      Is_Wetland = value %in% c(13:18, 22, 23),
-      Wetland_Coverage_Weight = coverage_fraction * Is_Wetland
-    ) %>%
-    group_by(prop_id) %>%
-    summarise(
-      Total_Lot_Pixels = sum(coverage_fraction),
-      Total_Wetland_Pixels = sum(Wetland_Coverage_Weight),
-      Pct_Wetland = (Total_Wetland_Pixels / Total_Lot_Pixels) * 100
-    )
-  
-  # -------------------------------------------------------------------------
-  # STEP B: RAW VECTOR DISK IMPORTATION
+  # STEP A: RAW VECTOR DISK IMPORTATION
   # -------------------------------------------------------------------------
   load_raw_shp <- function(file_path) {
     if (file.exists(file_path)) {
@@ -121,37 +99,39 @@ if (file.exists(cache_file)) {
   }
   
   cat("Importing environmental, geological, and jurisdictional vector frames...\n")
-  slopes_df      <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Slopes.shp")
-  wet_vec_df     <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/WetInv.shp")
-  erosion_df     <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/ErosionHazard.shp")
-  habitat_df     <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Habitat.shp")
-  hyd_poly_df    <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/HydPoly.shp")
-  liq_df         <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Liquefaction.shp")
-  landslid_df    <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Lndslid.shp")
-  landslp_df     <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Lndslp.shp")
-  mines_df       <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Mines.shp")
-  tribal_df      <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/TribalLands.shp")
-  aquifer_df     <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Aquifer.shp")
-  wui_proposed_df<- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/WildlandUrbanInterfaceProposed.shp")
+  slopes_df       <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Slopes.shp")
+  wet_vec_df      <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/WetInv.shp")
+  erosion_df      <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/ErosionHazard.shp")
+  habitat_df      <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Habitat.shp")
+  hyd_poly_df     <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/HydPoly.shp")
+  liq_df          <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Liquefaction.shp")
+  landslid_df     <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Lndslid.shp")
+  landslp_df      <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Lndslp.shp")
+  mines_df        <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Mines.shp")
+  tribal_df       <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/TribalLands.shp")
+  aquifer_df      <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Aquifer.shp")
+  wui_proposed_df <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/WildlandUrbanInterfaceProposed.shp")
   
   # -------------------------------------------------------------------------
-  # STEP C: SEGREGATING GEOMETRIC RULES BY LEGAL SEVERITY
+  # STEP B: SEGREGATING GEOMETRIC RULES BY POLICY SEVERITY (HARD MASKS)
   # -------------------------------------------------------------------------
   cat("Executing layer-specific architectural logic evaluations...\n")
   
-  # 1. Topography: Isolate severe steep slopes (>15% gradients or Steep text classifications)
-  steep_slope_mask <- slopes_df %>%
-    filter(grepl("15 - 25|25 - 40|40 - 100|greater than 100|Steep", desc_, ignore.case = TRUE) | 
-             grepl("Steep", GENDESC, ignore.case = TRUE)) %>%
+  # 1. Topography: Isolate ONLY extreme steep slopes (>= 40% based on Clark County Title 40 rules)
+  hard_slope_mask <- slopes_df %>%
+    filter(grepl("40 - 100|greater than 100", desc_, ignore.case = TRUE)) %>%
     st_geometry() %>% st_union()
   
-  # 2. Habitat: Areas completely off-limits to core footprint construction
-  habitat_mask <- if(!is.null(habitat_df)) st_union(st_geometry(habitat_df)) else NULL
+  # Isolate the mitigable slope layers for downstream financial risk mapping
+  slope_15_25_mask <- slopes_df %>% filter(grepl("15 - 25 percent", desc_, ignore.case = TRUE)) %>% st_geometry() %>% st_union()
+  slope_25_40_mask <- slopes_df %>% filter(grepl("25 - 40 percent", desc_, ignore.case = TRUE)) %>% st_geometry() %>% st_union()
   
-  # 3. Hydrology Polygons: Open water bodies precluding substantial construction
+  # 2. Hard Environmental Bounds: High-resolution vector wetlands, core habitats, and water bodies
+  wetland_mask  <- if(!is.null(wet_vec_df)) st_union(st_geometry(wet_vec_df)) else NULL
+  habitat_mask  <- if(!is.null(habitat_df)) st_union(st_geometry(habitat_df)) else NULL
   hyd_poly_mask <- if(!is.null(hyd_poly_df)) st_union(st_geometry(hyd_poly_df)) else NULL
   
-  # 4. Landslides: High-hazard active slope movements preventing foundation permits
+  # 3. Geological Hazards: Active landslide zones
   landslide_mask <- if(!is.null(landslid_df)) st_union(st_geometry(landslid_df)) else NULL
   landslp_mask   <- if(!is.null(landslp_df)) st_union(st_geometry(landslp_df)) else NULL
   severe_landslide_boundary <- if(!is.null(landslide_mask) || !is.null(landslp_mask)) {
@@ -160,71 +140,89 @@ if (file.exists(cache_file)) {
     NULL
   }
   
-  # 5. Long-term Resource Operations: Active surface mining permits
-  mines_mask <- if(!is.null(mines_df)) st_union(st_geometry(mines_df)) else NULL
+  # 4. Long-term Resource Operations
+  mines_mask  <- if(!is.null(mines_df)) st_union(st_geometry(mines_df)) else NULL
   
-  # 6. Sovereign Exemptions: Native American tribal land cuts completely clear of local codes
+  # 5. Sovereign Tribal Lands: Complete jurisdictional cutout outside local city/county codes
   tribal_mask <- if(!is.null(tribal_df)) st_union(st_geometry(tribal_df)) else NULL
   
-  # 7. Unifying Hard Spatial Exclusion Vectors (Land footprint drops completely to 0)
-  hard_exclusion_list   <- list(steep_slope_mask, habitat_mask, hyd_poly_mask, severe_landslide_boundary, mines_mask, tribal_mask)
+  # 6. Unifying Hard Spatial Constraints (Land footprint drops completely to 0)
+  hard_exclusion_list   <- list(hard_slope_mask, wetland_mask, habitat_mask, hyd_poly_mask, 
+                                severe_landslide_boundary, mines_mask, tribal_mask)
   valid_exclusions      <- hard_exclusion_list[!sapply(hard_exclusion_list, is.null)]
   master_exclusion_mask <- do.call(st_union, valid_exclusions)
   
   # -------------------------------------------------------------------------
-  # STEP D: COMPUTING LOT GEOMETRIES & FINANCIAL VIABILITY RISK TAGGING
+  # STEP C: RUN INDEPENDENT HAZARD ATTRIBUTION SPATIAL INTERSECTIONS
+  # -------------------------------------------------------------------------
+  cat("Calculating individual hazard footprint deductions for analysis reports...\n")
+  
+  calc_overlap_acres <- function(parcels, constraint_mask) {
+    if (is.null(constraint_mask)) return(rep(0, nrow(parcels)))
+    intersections <- st_intersection(st_geometry(parcels), constraint_mask)
+    if (length(intersections) == 0) return(rep(0, nrow(parcels)))
+    
+    overlap_df <- st_intersection(parcels, constraint_mask)
+    overlap_df$area_sqft <- as.numeric(st_area(overlap_df))
+    summary_df <- overlap_df %>% st_drop_geometry() %>% 
+      group_by(prop_id) %>% summarise(acres = sum(area_sqft, na.rm = TRUE) / 43560)
+    
+    return(summary_df)
+  }
+  
+  lots_wetland_loss <- calc_overlap_acres(lots_with_rules, wetland_mask) %>% rename(Wetland_Acres = acres)
+  lots_slope_loss   <- calc_overlap_acres(lots_with_rules, hard_slope_mask) %>% rename(Critical_Slope_Acres = acres)
+  lots_total_loss   <- calc_overlap_acres(lots_with_rules, master_exclusion_mask) %>% rename(Hard_Excluded_Acres = acres)
+  
+  
+  # -------------------------------------------------------------------------
+  # 5. INTEGRATED CAPACITY VOLUMETRIC CALCULATION & ECONOMIC ENGINE
   # -------------------------------------------------------------------------
   cat("Calculating geometric intersections and tracking mitigation cost indicators...\n")
   
-  # Compute hard vector overlay drops lot-by-lot
-  exclusion_intersections <- st_intersection(lots_with_rules, master_exclusion_mask)
-  exclusion_intersections$dropped_sqft <- st_area(exclusion_intersections)
-  
-  lot_exclusion_summary <- exclusion_intersections %>%
-    st_drop_geometry() %>%
-    group_by(prop_id) %>%
-    summarise(Hard_Excluded_Acres = as.numeric(sum(dropped_sqft, na.rm = TRUE)) / 43560)
-  
-  # -------------------------------------------------------------------------
-  # STEP E: INTEGRATED CAPACITY VOLUMETRIC CALCULATION ENGINE
-  # -------------------------------------------------------------------------
   ASSUMED_AVG_STORY_HEIGHT <- 11  
   ASSUMED_AVG_UNIT_SIZE    <- 1200 
   
   lots_capacity_model <- lots_with_rules %>%
-    left_join(lot_wetland_summary, by = "prop_id") %>%
-    left_join(lot_exclusion_summary, by = "prop_id") %>%
+    left_join(lots_wetland_loss, by = "prop_id") %>%
+    left_join(lots_slope_loss, by = "prop_id") %>%
+    left_join(lots_total_loss, by = "prop_id") %>%
     mutate(
-      Pct_Wetland           = ifelse(is.na(Pct_Wetland), 0, Pct_Wetland),
-      Hard_Excluded_Acres   = ifelse(is.na(Hard_Excluded_Acres), 0, Hard_Excluded_Acres),
+      # Clean up missing data joins from empty overlap records
+      Wetland_Acres        = ifelse(is.na(Wetland_Acres), 0, Wetland_Acres),
+      Critical_Slope_Acres = ifelse(is.na(Critical_Slope_Acres), 0, Critical_Slope_Acres),
+      Hard_Excluded_Acres  = ifelse(is.na(Hard_Excluded_Acres), 0, Hard_Excluded_Acres),
       
-      Lot_Acres             = as.numeric(Shape_Area) / 43560,
-      Raster_Wetland_Acres  = Lot_Acres * (Pct_Wetland / 100),
+      Lot_Acres            = as.numeric(Shape_Area) / 43560,
       
-      # 1. DEDUCT SPATIAL CONSTRICTIONS TO EMERGE WITH NET DEVELOPABLE GROUND
-      Net_Lot_Acres         = pmax(0, Lot_Acres - Raster_Wetland_Acres - Hard_Excluded_Acres),
+      # 1. DEDUCT SPATIAL FOOTPRINT ACREAGE FROM PARENT SHAPES (Preserves 15-40% slopes)
+      Net_Lot_Acres         = pmax(0, Lot_Acres - Hard_Excluded_Acres),
       
-      # 2. INTERSECTION SPATIAL CHECKS FOR OVERLAY MITIGATION COST BALANCES
-      # Erosion, Liquefaction, Aquifers, and Proposed WUI layers DO NOT reduce acreage. 
-      # They flag the property matrix and inject baseline placeholder engineering multipliers.
+      # 2. MITIGABLE HAZARD INTERSECTIONS (Preserves acreage, injects cost multipliers)
+      Has_Slope_15_25       = as.logical(st_intersects(geometry, slope_15_25_mask)),
+      Has_Slope_25_40       = as.logical(st_intersects(geometry, slope_25_40_mask)),
       Has_Erosion_Hazard    = as.logical(st_intersects(geometry, st_union(st_geometry(erosion_df)))),
       Has_Liquefaction_Risk = as.logical(st_intersects(geometry, st_union(st_geometry(liq_df)))),
       Has_Aquifer_Protected = as.logical(st_intersects(geometry, st_union(st_geometry(aquifer_df)))),
       Has_WUI_Proposed      = as.logical(st_intersects(geometry, st_union(st_geometry(wui_proposed_df)))),
       
+      Has_Slope_15_25       = ifelse(is.na(Has_Slope_15_25), FALSE, Has_Slope_15_25),
+      Has_Slope_25_40       = ifelse(is.na(Has_Slope_25_40), FALSE, Has_Slope_25_40),
       Has_Erosion_Hazard    = ifelse(is.na(Has_Erosion_Hazard), FALSE, Has_Erosion_Hazard),
       Has_Liquefaction_Risk = ifelse(is.na(Has_Liquefaction_Risk), FALSE, Has_Liquefaction_Risk),
       Has_Aquifer_Protected = ifelse(is.na(Has_Aquifer_Protected), FALSE, Has_Aquifer_Protected),
       Has_WUI_Proposed      = ifelse(is.na(Has_WUI_Proposed), FALSE, Has_WUI_Proposed),
       
-      # ECONOMIC ANALYSIS: Build Financial Placeholder Matrix ($ increase per SqFt built)
-      Added_Cost_Per_SqFt   = 0 +
-        ifelse(Has_Erosion_Hazard, 12, 0) +     # Shoring, retaining stabilization engineering
-        ifelse(Has_Liquefaction_Risk, 25, 0) +  # Deep pilings and foundational structural tie-beams
-        ifelse(Has_Aquifer_Protected, 8, 0) +   # Advanced stormwater filter vaults / separators
-        ifelse(Has_WUI_Proposed, 15, 0),        # Class A ignition-resistant roof & eave components
+      # Calculate the cumulative cost premium matrix per square foot built
+      Added_Cost_Per_SqFt   = 0 + 
+        ifelse(Has_Slope_15_25, 15, 0) +        # Step foundations / grading cost
+        ifelse(Has_Slope_25_40, 35, 0) +        # Structural deep pier / stilt anchors
+        ifelse(Has_Erosion_Hazard, 12, 0) +     # Site stabilization controls
+        ifelse(Has_Liquefaction_Risk, 25, 0) +  # Foundation pilings
+        ifelse(Has_Aquifer_Protected, 8, 0) +   # Stormwater filtration vaults
+        ifelse(Has_WUI_Proposed, 15, 0),        # Fire envelope hardening
       
-      # 3. VOLUMETRIC DIMENSIONAL REDUCTIONS
+      # 3. VOLUMETRIC AND REGULATORY GEOMETRY REDUCTIONS
       Setback_Reduction_Factor = case_when(
         Front_Setback_Ft >= 20 ~ 0.70,  
         Front_Setback_Ft == 15 ~ 0.75,  
@@ -247,14 +245,15 @@ if (file.exists(cache_file)) {
       # 4. CHOKEPOINT CONSTRACTION INTERSECTION EVALUATION
       MaxPossibleConstruction  = pmin(Physical_Unit_Capacity, Regulatory_Density_Cap),
       Net_Realizable_Homes     = pmax(0, MaxPossibleConstruction - Units),
-      Is_Useless_Upzone        = ifelse(Regulatory_Density_Cap > Units & MaxPossibleConstruction <= Units, TRUE, FALSE))
+      Is_Useless_Upzone        = ifelse(Regulatory_Density_Cap > Units & MaxPossibleConstruction <= Units, TRUE, FALSE)
+    )
   
   cat("Saving consolidated data cache to disk storage layout...\n")
   saveRDS(lots_capacity_model, file = cache_file)
 }
 
 # =========================================================================
-# 6. CONSOLIDATE LOGICAL HOUSING TYPE ASSIGNMENT (Expanded)
+# 6. CONSOLIDATE LOGICAL HOUSING TYPE ASSIGNMENT
 # =========================================================================
 res_keywords <- paste0("Residential|Resid|Single-family|Single Family|Multifamily|Multiple-family|",
                        "Mobile Home|MHP|MDR|LDR|HDR|RLD|Mixed Use|Mixed-Use|WMU|Office Residential|",
@@ -285,10 +284,7 @@ label_y_coords <- sapply(st_geometry(city_outlines), function(geom) st_bbox(geom
 
 city_labels <- city_outlines %>%
   st_drop_geometry() %>%
-  mutate(
-    X = label_x_coords, 
-    Y = label_y_coords + 4000
-  ) %>%
+  mutate(X = label_x_coords, Y = label_y_coords + 4000) %>%
   st_as_sf(coords = c("X", "Y"), crs = target_crs)
 
 # =========================================================================
@@ -302,166 +298,277 @@ lots_capacity_model <- lots_capacity_model %>%
   mutate(
     Intersects_Cemetery = as.logical(st_intersects(geometry, st_union(cemeteries))),
     Intersects_Cemetery = ifelse(is.na(Intersects_Cemetery), FALSE, Intersects_Cemetery),
-    Net_Realizable_Homes = ifelse(Intersects_Cemetery == TRUE, 0, Net_Realizable_Homes)
+    MaxPossibleConstruction = ifelse(Intersects_Cemetery, 0, MaxPossibleConstruction),
+    Net_Realizable_Homes    = ifelse(Intersects_Cemetery, 0, Net_Realizable_Homes)
   )
 
 # =========================================================================
 # 8. VISUALIZATION AND GRAPHIC OUTPUT GENERATION
 # =========================================================================
+
 # --- GRAPHIC 1: Zone-Level Growth Potential Summary ---
 zone_summary_layer <- lots_capacity_model %>%
   group_by(Zoning_ID) %>%
-  summarise(
-    geometry = st_union(geometry), 
-    Total_Net_Realizable = sum(Net_Realizable_Homes, na.rm = TRUE)
-  ) %>%
+  summarise(geometry = st_union(geometry), Total_Net_Realizable = sum(Net_Realizable_Homes, na.rm = TRUE)) %>%
   ungroup() %>%
-  mutate(
-    Zoning_Status = ifelse(Total_Net_Realizable > 0, "Under Zoned Limit (Has Room)", "At/Over Zoned Limit")
-  )
+  mutate(Zoning_Status = ifelse(Total_Net_Realizable > 0, "Under Zoned Limit (Has Room)", "At/Over Zoned Limit"))
 
 map_categorical <- ggplot() +
   geom_sf(data = zone_summary_layer, aes(fill = Zoning_Status), color = NA) +
   geom_sf(data = city_outlines, fill = NA, color = "#4A4A4A", size = 0.5, linetype = "solid") +
   geom_sf_text(data = city_labels, aes(label = City), color = "black", fontface = "bold", size = 3, alpha = 0.6, check_overlap = TRUE) +
-  scale_fill_manual(
-    values = c("Under Zoned Limit (Has Room)" = "#21918c", "At/Over Zoned Limit" = "#CCCCFF"), 
-    name = "Zoning Limitations"
-  ) +
-  labs(
-    title = "Zoning Limitations & Growth Potential", 
-    subtitle = "Zone-level status aggregated from individual parcel headroom analysis"
-  ) +
-  theme_minimal() + 
-  theme(
-    panel.grid = element_blank(), 
-    axis.text = element_blank(), 
-    axis.title.x = element_blank(), 
-    axis.title.y = element_blank(), 
-    legend.position = "bottom"
-  )
+  scale_fill_manual(values = c("Under Zoned Limit (Has Room)" = "#21918c", "At/Over Zoned Limit" = "#CCCCFF"), name = "Zoning Limitations") +
+  theme_minimal() + theme(panel.grid = element_blank(), axis.text = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank(), legend.position = "bottom")
 
+# Print to RStudio Plot Viewer Pane
+print(map_categorical)
+
+# Save to Local Disk Storage Directory
 ggsave(filename = file.path(output_dir, "Zoning_Limitations_Categorical.png"), plot = map_categorical, width = 10, height = 8, dpi = 300, bg = "white")
 
-# --- GRAPHIC 2: Lot-Level Realizable Headroom Gradient Map ---
+
+# --- GRAPHIC 2: Lot-Level ADJUSTED Realizable Headroom Gradient Map ---
 lots_gradient <- lots_capacity_model %>%
-  mutate(
-    Headroom_Display = ifelse(Net_Realizable_Homes == 0, NA, Net_Realizable_Homes)
-  )
+  mutate(Headroom_Display = ifelse(Net_Realizable_Homes == 0, NA, Net_Realizable_Homes))
 
 map_gradient <- ggplot() +
   geom_sf(data = lots_gradient, fill = "#D3D3D3", color = NA) +
   geom_sf(data = filter(lots_gradient, !is.na(Headroom_Display)), aes(fill = Headroom_Display), color = NA) +
   geom_sf(data = city_outlines, fill = NA, color = "#4A4A4A", size = 0.5) +
   geom_sf_text(data = city_labels, aes(label = City), color = "black", fontface = "bold", size = 3, alpha = 0.6, check_overlap = TRUE) +
-  scale_fill_gradient(
-    low = "#FFFFE0", 
-    high = "#FF0000", 
-    name = "Potential\nnew homes\nunder current\nzoning limitation", 
-    na.value = "#D3D3D3"
+  scale_fill_gradient(low = "#FFFFE0", high = "#FF0000", name = "Net viable\nnew homes\n(Adjusted Footprint)", na.value = "#D3D3D3") +
+  labs(
+    title = "Net Realizable Housing Headroom Gradient Map", 
+    subtitle = "Lot-level units accounting for zoning parameters, existing homes, environmental traits, and sovereign lands"
   ) +
-  theme_minimal() + 
-  theme(
-    panel.grid = element_blank(), 
-    axis.text = element_blank(), 
-    axis.title.x = element_blank(), 
-    axis.title.y = element_blank(), 
-    legend.position = "right"
-  )
+  theme_minimal() + theme(panel.grid = element_blank(), axis.text = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank(), legend.position = "right")
 
+print(map_gradient)
 ggsave(filename = file.path(output_dir, "Zoning_Headroom_Gradient.png"), plot = map_gradient, width = 10, height = 8, dpi = 300, bg = "white")
 
 # --- GRAPHIC 3: Residential Footprint Matrix ---
 zoning_matrix_data <- zoning_cleaned %>%
-  left_join(
-    st_drop_geometry(lots_capacity_model) %>% 
-      group_by(Zoning_ID) %>% 
-      summarise(Units = sum(Units, na.rm = TRUE)), 
-    by = "Zoning_ID"
-  ) %>%
-  mutate(
-    Is_Residential = ifelse(
-      grepl(res_keywords, desc_, ignore.case = TRUE) & 
-        !grepl("Airport/Residential|Heavy Industrial|Light Industrial", desc_, ignore.case = TRUE),
-      "Residential / Mixed-Use Zoning", 
-      "Pure Commercial / Industrial / Parks"
-    )
-  )
+  left_join(st_drop_geometry(lots_capacity_model) %>% group_by(Zoning_ID) %>% summarise(Units = sum(Units, na.rm=TRUE)), by="Zoning_ID") %>%
+  mutate(Is_Residential = ifelse(grepl(res_keywords, desc_, ignore.case = TRUE) & !grepl("Airport/Residential|Heavy Industrial|Light Industrial", desc_, ignore.case = TRUE), 
+                                 "Residential / Mixed-Use Zoning", "Pure Commercial / Industrial / Parks"))
 
 map_residential <- ggplot() +
   geom_sf(data = zoning_matrix_data, aes(fill = Is_Residential), color = NA) +
   geom_sf(data = city_outlines, fill = NA, color = "#4A4A4A", size = 0.5) +
   geom_sf_text(data = city_labels, aes(label = City), color = "black", fontface = "bold", size = 3, alpha = 0.6, check_overlap = TRUE) +
+  scale_fill_manual(values = c("Residential / Mixed-Use Zoning" = "#B19FF1", "Pure Commercial / Industrial / Parks" = "#CCCCFF"), name = "Regulatory Framework") +
+  theme_minimal() + theme(panel.grid = element_blank(), axis.text = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank(), legend.position = "bottom")
+
+# Print to RStudio Plot Viewer Pane
+print(map_residential)
+
+ggsave(filename = file.path(output_dir, "Zoning_Residential_Footprint_Matrix.png"), plot = map_residential, width = 10, height = 8, dpi = 300, bg = "white")
+
+# --- GRAPHIC 4: Dan's South Vancouver Mixed-Use Correction Map ---
+cat("Generating South Vancouver mixed-use housing stock validation map for Dan...\n")
+
+# Isolate the exact parcels that were unlocked exclusively by adding the commercial keywords
+dan_map_data <- lots_capacity_model %>%
+  mutate(
+    # Old baseline: Strict residential-only terms
+    Old_Regex_Res = grepl("Residential|Resid|Single-family|Single Family|Multifamily|Multiple-family|Mobile Home|MHP|MDR|LDR|HDR|RLD", 
+                          desc_, ignore.case = TRUE) & 
+      !grepl("Airport/Residential|Heavy Industrial|Light Industrial", desc_, ignore.case = TRUE),
+    
+    # New baseline: Includes expanded commercial/mixed-use village keywords
+    New_Regex_Res = grepl(res_keywords, desc_, ignore.case = TRUE) & 
+      !grepl("Airport/Residential|Heavy Industrial|Light Industrial", desc_, ignore.case = TRUE),
+    
+    # Flag the parcels that were unlocked by the update
+    Zoning_Correction_Status = case_when(
+      New_Regex_Res & !Old_Regex_Res ~ "Newly Unlocked Mixed-Use Housing Stock",
+      New_Regex_Res & Old_Regex_Res  ~ "Existing Baseline Residential",
+      TRUE                            ~ "Pure Commercial / Industrial / Other"
+    )
+  )
+
+# Build the high-contrast validation map
+map_dan_vancouver <- ggplot() +
+  # 1. Base Layer: Solid color fills for all parcels (color = NA removes parcel lines for speed)
+  geom_sf(data = dan_map_data, aes(fill = Zoning_Correction_Status), color = NA) +
+  
+  # 2. City Boundary Overlay
+  geom_sf(data = city_outlines, fill = NA, color = "#4A4A4A", size = 0.6, linetype = "solid") +
+  
+  # 3. Targeted City Text Label
+  geom_sf_text(data = filter(city_labels, City == "Vancouver"), aes(label = City), 
+               color = "black", fontface = "bold", size = 4, alpha = 0.7) +
+  
+  # Custom validation color scheme highlighting the precise delta Dan asked about
   scale_fill_manual(
-    values = c("Residential / Mixed-Use Zoning" = "#B19FF1", "Pure Commercial / Industrial / Parks" = "#CCCCFF"), 
-    name = "Regulatory Framework"
+    values = c(
+      "Newly Unlocked Mixed-Use Housing Stock" = "#E66101", # High-contrast warning orange
+      "Existing Baseline Residential"          = "#B19FF1", # Light Violet background
+      "Pure Commercial / Industrial / Other"   = "#F7F7F7"  # Clean faint grey for context
+    ),
+    name = "Zoning Correction Audit"
   ) +
+  
+  # Zooming the camera framework directly onto South Vancouver coordinates
+  # (Based on standard Washington South NAD83 survey foot extents near the Columbia River)
+  coord_sf(xlim = c(1075000, 1100000), ylim = c(1100000, 1300000), expand = FALSE) +
+  
+  # Policy titles addressing Dan's exact critique
   labs(
-    title = "Residential vs Non-Residential Zoning Footprint Matrix", 
-    subtitle = "Consolidated view of regulatory allowances for housing development across Clark County"
+    title = "South Vancouver Mixed-Use Housing Stock Correction",
+    subtitle = "Highlighting multi-family apartment capacity previously obscured inside the Commercial land bucket",
+    caption = "Orange parcels highlight multi-family housing opportunities unlocked by updating regex definitions to include vertical mixed-use codes."
   ) +
+  
   theme_minimal() + 
   theme(
     panel.grid = element_blank(), 
     axis.text = element_blank(), 
     axis.title.x = element_blank(), 
     axis.title.y = element_blank(), 
-    legend.position = "bottom"
+    legend.position = "right",
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "#4A4A4A", size = 10)
   )
 
-ggsave(filename = file.path(output_dir, "Zoning_Residential_Footprint_Matrix.png"),
-       plot = map_residential, width = 10, height = 8, dpi = 300, bg = "white")
+# Print cleanly to your RStudio Plot Pane for immediate inspection
+print(map_dan_vancouver)
+
+# Save the high-res file to your documents folder
+ggsave(
+  filename = file.path(output_dir, "Dan_South_Vancouver_MixedUse_Correction.png"), 
+  plot = map_dan_vancouver, 
+  width = 10, 
+  height = 8, 
+  dpi = 300, 
+  bg = "white"
+)
+
+# --- GRAPHIC 5: County-Wide Commercial & Mixed-Use Housing Stock Expansion ---
+cat("Generating county-wide commercial and mixed-use capacity addition map for Dan...\n")
+
+# 1. Define the baseline restrictive single-family/pure multi-family keyword array
+restrictive_res_keywords <- "Residential|Resid|Single-family|Single Family|Multifamily|Multiple-family|Mobile Home|MHP|MDR|LDR|HDR|RLD"
+
+# 2. Flag parcels that are ONLY caught by the expanded mixed-use/commercial keyword array
+lots_mixed_use_additions <- lots_capacity_model %>%
+  mutate(
+    Is_Baseline_Residential = grepl(restrictive_res_keywords, desc_, ignore.case = TRUE),
+    Is_Expanded_Residential = grepl(res_keywords, desc_, ignore.case = TRUE) & 
+      !grepl("Airport/Residential|Heavy Industrial|Light Industrial", desc_, ignore.case = TRUE),
+    
+    # Isolate the exact parcels added by the zoning classification expansion across the county
+    Addition_Status = case_when(
+      Is_Baseline_Residential & Is_Expanded_Residential ~ "Baseline Residential Stock",
+      !Is_Baseline_Residential & Is_Expanded_Residential ~ "Added via Commercial/Mixed-Use Expansion",
+      TRUE                                               ~ "Non-Residential / Pure Industrial / Parks"
+    )
+  )
+
+# 3. Render the comprehensive county-wide addition map
+map_mixed_use_additions <- ggplot() +
+  # Draw all parcels categorized by their addition status (color = NA avoids layout boundary grid noise)
+  geom_sf(data = lots_mixed_use_additions, aes(fill = Addition_Status), color = NA) +
+  
+  # Overlay city limits to provide structural geographic anchors
+  geom_sf(data = city_outlines, fill = NA, color = "#4A4A4A", size = 0.5) +
+  
+  # Add semi-transparent city headers pushed 4,000 feet above boundaries
+  geom_sf_text(data = city_labels, aes(label = City), 
+               color = "black", fontface = "bold", size = 3, alpha = 0.6, check_overlap = TRUE) +
+  
+  # Custom manual color fills to highlight county-wide additions clearly
+  scale_fill_manual(
+    values = c(
+      "Added via Commercial/Mixed-Use Expansion" = "#FF0000",  # Bright Red to highlight inventory corrections
+      "Baseline Residential Stock"               = "#B19FF1",  # Soft Violet background for baseline housing
+      "Non-Residential / Pure Industrial / Parks" = "#CCCCFF"  # Pale Periwinkle for locked non-housing lands
+    ),
+    name = "Inventory Status"
+  ) +
+  
+  labs(
+    title = "County-Wide Housing Inventory Expansion: Commercial & Mixed-Use Frameworks",
+    subtitle = "Isolating parcels unlocked by expanding regional housing filters to capture multi-family allowances in commercial hubs",
+    caption = "Bright red clusters highlight commercial, downtown, and town center village zones county-wide that legally permit vertical multi-family housing."
+  ) +
+  
+  theme_minimal() + 
+  theme(
+    panel.grid = element_blank(), 
+    axis.text = element_blank(), 
+    axis.title.x = element_blank(), 
+    axis.title.y = element_blank(), 
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 14),
+    plot.subtitle = element_text(color = "#4A4A4A", size = 10)
+  )
+
+# Print to your active RStudio Plot Viewer Pane
+print(map_mixed_use_additions)
+
+# Save the graphic file to your local documents directory
+ggsave(
+  filename = file.path(output_dir, "Zoning_MixedUse_Housing_Additions.png"), 
+  plot = map_mixed_use_additions, 
+  width = 10, 
+  height = 8, 
+  dpi = 300, 
+  bg = "white"
+)
 
 # =========================================================================
-# 9. ECONOMIC MATRIX: HOUSING POTENTIAL AND INFRASTRUCTURE MITIGATION COSTS
+# 9. INTEGRATED ANALYSIS REPORT MATRIX (Capacity vs Constraint Reductions)
 # =========================================================================
-cat("Compiling economic capacity and mitigation risk matrices...\n")
-
-# Intersect the lot capacity model with clean city limits to map geographic accountability
 city_intersections <- st_intersection(lots_capacity_model, city_outlines)
 city_intersections$city_intersect_area <- st_area(city_intersections)
 
-# Allocate each lot strictly to its primary highest percentage city match
-lots_with_city_economic <- city_intersections %>%
-  group_by(prop_id) %>%
-  arrange(desc(city_intersect_area), .by_group = TRUE) %>%
-  slice(1) %>%
-  ungroup()
+lots_with_city <- city_intersections %>%
+  group_by(prop_id) %>% arrange(desc(city_intersect_area), .by_group = TRUE) %>% slice(1) %>% ungroup()
 
-# Execute economic aggregation across urban growth boundaries
-city_economic_matrix <- lots_with_city_economic %>%
+hazard_lookup <- lots_capacity_model %>%
   st_drop_geometry() %>%
+  select(prop_id, Wetland_Acres, Critical_Slope_Acres, Intersects_Cemetery)
+
+lots_with_city_fixed <- lots_with_city %>%
+  left_join(hazard_lookup, by = "prop_id")
+
+city_housing_report_matrix <- lots_with_city_fixed %>%
+  st_drop_geometry() %>%
+  mutate(
+    Gross_Zoned_Capacity       = floor(Lot_Acres * UnitsPerAc),
+    Units_Lost_To_Constraints  = pmax(0, Gross_Zoned_Capacity - MaxPossibleConstruction)
+  ) %>%
   group_by(City) %>%
   summarise(
-    # 1. Baseline Realizable Housing Yield Tracking
-    Potential_New_Homes        = sum(Net_Realizable_Homes, na.rm = TRUE),
-    
-    # 2. Expose the structural count of "Useless Upzones" caused by physical boundaries
-    Total_Useless_Upzones     = sum(Is_Useless_Upzone, na.rm = TRUE),
-    
-    # 3. Sum up total square footage of new construction that hits each hazard category
-    # (Calculated by multiplying potential new home counts by your standard 1,200 sqft footprint)
-    Erosion_Mitigation_SqFt   = sum(ifelse(Has_Erosion_Hazard, Net_Realizable_Homes * 1200, 0), na.rm = TRUE),
-    Liquefaction_Eng_SqFt     = sum(ifelse(Has_Liquefaction_Risk, Net_Realizable_Homes * 1200, 0), na.rm = TRUE),
-    Aquifer_Vault_SqFt        = sum(ifelse(Has_Aquifer_Protected, Net_Realizable_Homes * 1200, 0), na.rm = TRUE),
-    WUI_Hardening_SqFt        = sum(ifelse(Has_WUI_Proposed, Net_Realizable_Homes * 1200, 0), na.rm = TRUE),
-    
-    # 4. Total Financial Mitigation Capital Overhead required to unlock the city's housing
-    # Evaluates the placeholder square-footage cost premiums ($25, $12, $8, $15) assigned in Sec 5
-    Total_Projected_Premium_USD = sum(Net_Realizable_Homes * 1200 * Added_Cost_Per_SqFt, na.rm = TRUE)
+    Total_Viable_New_Housing_Units              = sum(Net_Realizable_Homes, na.rm = TRUE),
+    Total_Housing_Potential_Lost_To_Constraints = sum(Units_Lost_To_Constraints, na.rm = TRUE)
   ) %>%
+  arrange(desc(Total_Viable_New_Housing_Units))
+
+print(city_housing_report_matrix)
+write.csv(city_housing_report_matrix, file = file.path(output_dir, "City_UGB_Unified_Housing_Capacity_Report.csv"), row.names = FALSE)
+
+# =========================================================================
+# 9b. CONSTRAINT ATTRIBUTION BREAKDOWN: DISAGGREGATING LOSSES BY POLICY TYPE
+# =========================================================================
+cat("Deconstructing lost housing capacity metrics by explicit vector limitation type...\n")
+
+city_hazard_breakdown_matrix <- lots_with_city_fixed %>%
+  st_drop_geometry() %>%
   mutate(
-    # Calculate the average mitigation tax overhead penalty per potential new housing unit
-    Avg_Mitigation_Premium_Per_Unit = ifelse(Potential_New_Homes > 0, Total_Projected_Premium_USD / Potential_New_Homes, 0)
+    Gross_Zoned_Capacity       = floor(Lot_Acres * UnitsPerAc),
+    Units_Lost_To_Wetlands     = ifelse(Wetland_Acres > 0, floor(Wetland_Acres * UnitsPerAc), 0),
+    Units_Lost_To_Severe_Slopes = ifelse(Critical_Slope_Acres > 0, floor(Critical_Slope_Acres * UnitsPerAc), 0),
+    Units_Lost_To_Cemetaries   = ifelse(Intersects_Cemetery, Gross_Zoned_Capacity, 0)
   ) %>%
-  arrange(desc(Potential_New_Homes))
+  group_by(City) %>%
+  summarise(
+    Lost_To_Vector_Wetlands     = sum(Units_Lost_To_Wetlands, na.rm = TRUE),
+    Lost_To_Severe_Slopes_40Pct = sum(Units_Lost_To_Severe_Slopes, na.rm = TRUE),
+    Lost_To_Cemetery_Dedication = sum(Units_Lost_To_Cemetaries, na.rm = TRUE)
+  ) %>%
+  arrange(desc(Lost_To_Vector_Wetlands + Lost_To_Severe_Slopes_40Pct))
 
-# Print the completed economic viability matrix to your R console
-print(city_economic_matrix)
-
-# Export the matrix to your specified documents folder layout as a production CSV file
-write.csv(city_economic_matrix, 
-          file = file.path(output_dir, "City_UGB_Housing_Economic_Viability_Matrix.csv"), 
-          row.names = FALSE)
-
-
+print(city_hazard_breakdown_matrix)
+write.csv(city_hazard_breakdown_matrix, file = file.path(output_dir, "City_UGB_Housing_Loss_Constraint_Attribution.csv"), row.names = FALSE)
