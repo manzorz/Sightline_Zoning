@@ -12,32 +12,25 @@ target_crs <- 2927 # NAD83 / Washington South (ftUS)
 if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
 
 # =========================================================================
-# 1, 2, & 3. DATA INGESTION & COHESIVE BASE SNAPSHOT CACHE CONTROL
+# 1. SPATIAL GEOMETRY SNAPSHOT CACHE CONTROL (PNW & Clark County Tracts)
 # =========================================================================
 pnw_cache_file   <- file.path(output_dir, "pnw_tracts_2024.rds")
 clark_cache_file <- file.path(output_dir, "clark_county_tracts_2024.rds")
 
-# --- STAGE 1: CHECK AND EXTRACT PACIFIC NORTHWEST / CLARK COUNTY CACHES ---
 if (file.exists(clark_cache_file)) {
-  
   cat("Found local Clark County spatial reference cache. Loading instantly...\n")
   clark_tracts <- readRDS(clark_cache_file)
-  
 } else {
-  
   if (file.exists(pnw_cache_file)) {
     cat("Found PNW regional cache. Loading to extract Clark County...\n")
     pnw_tracts <- readRDS(pnw_cache_file)
   } else {
-    cat("No caches found. Ingesting massive nationwide tract shapefile (this will take a moment)...\n")
+    cat("No caches found. Ingesting massive nationwide tract shapefile...\n")
     raw_us_path <- paste0("C:/Users/gmann/Downloads/nhgis0015_shape/nhgis0015_shape/nhgis0015_shapefile_tl2024_us_tract_2024/",
                           "us_tract_2024/US_tract_2024.shp")
-    
-    # Read the full US framework including the tabular .dbf join parameters
     us_tracts <- st_read(raw_us_path, quiet = TRUE)
     
     cat("Subsetting shapefile to Oregon (STATEFP '41') and Washington (STATEFP '53')...\n")
-    # NHGIS standard FIPS state track boundaries: 41 = OR, 53 = WA
     pnw_tracts <- us_tracts %>%
       filter(STATEFP %in% c("41", "53")) %>%
       st_transform(target_crs) %>%
@@ -45,44 +38,34 @@ if (file.exists(clark_cache_file)) {
     
     cat("Saving Pacific Northwest regional tract cache to disk...\n")
     saveRDS(pnw_tracts, file = pnw_cache_file)
-    rm(us_tracts) # Clear massive US layer out of system RAM instantly
+    rm(us_tracts) 
   }
   
   cat("Isolating Clark County, WA (COUNTYFP '011') from the Pacific Northwest dataset...\n")
-  # Washington State FIPS = 53, Clark County FIPS = 011
-  clark_tracts <- pnw_tracts %>%
-    filter(STATEFP == "53" & COUNTYFP == "011")
-  
+  clark_tracts <- pnw_tracts %>% filter(STATEFP == "53" & COUNTYFP == "011")
   cat("Saving isolated Clark County tract snapshot layer to disk...\n")
   saveRDS(clark_tracts, file = clark_cache_file)
 }
 
+# =========================================================================
+# 2. MASTER PROPERTY SNAPSHOT CACHE (Loads base taxlots and zoning)
+# =========================================================================
 base_cache_file <- file.path(output_dir, "base_spatial_inputs.rds")
 
 if (file.exists(base_cache_file)) {
-  
   cat("Loading projected base spatial datasets from local disk snapshot...\n")
   base_inputs <- readRDS(base_cache_file)
-  
-  lots           <- base_inputs$lots
-  zoning_cleaned <- base_inputs$zoning_cleaned
-  ugabnd         <- base_inputs$ugabnd
-  lots_with_rules<- base_inputs$lots_with_rules
-  
+  lots            <- base_inputs$lots
+  zoning_cleaned  <- base_inputs$zoning_cleaned
+  ugabnd          <- base_inputs$ugabnd
+  lots_with_rules <- base_inputs$lots_with_rules
 } else {
-  
   cat("No base spatial cache found. Initiating initial heavy disk data read layout...\n")
   
-  lots   <- st_read("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/TaxlotsPublic.shp") %>%
-    st_transform(target_crs) %>% st_make_valid()
+  lots   <- st_read("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/TaxlotsPublic.shp") %>% st_transform(target_crs) %>% st_make_valid()
+  zoning <- st_read("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Zoning.shp") %>% st_transform(target_crs) %>% st_make_valid()
+  ugabnd <- st_read("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Ugabnd.shp") %>% st_transform(target_crs) %>% st_make_valid()
   
-  zoning <- st_read("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Zoning.shp") %>%
-    st_transform(target_crs) %>% st_make_valid()
-  
-  ugabnd <- st_read("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Ugabnd.shp") %>%
-    st_transform(target_crs) %>% st_make_valid()
-  
-  # Remove duplicate stacked geometries to keep calculations clean
   zoning_cleaned <- zoning %>% 
     filter(!duplicated(st_geometry(.))) %>%
     mutate(
@@ -91,7 +74,6 @@ if (file.exists(base_cache_file)) {
       MaxZoneUnits = round(Zone_Acres * UnitsPerAc)
     )
   
-  # Execute largest overlap spatial intersection (Lots inherit zone-level regulations)
   cat("Computing largest-overlap spatial matrix allocations...\n")
   intersections <- st_intersection(lots, zoning_cleaned)
   intersections$intersect_area <- st_area(intersections)
@@ -102,11 +84,9 @@ if (file.exists(base_cache_file)) {
     slice(1) %>%
     ungroup()
   
-  # Map standard Clark County Title 40 height and yard setback parameters
   lots_with_rules <- lots_joined %>%
     mutate(
       Zone_Code = sub(".*\\((.*)\\).*", "\\1", desc_),
-      
       Max_Height_Ft = case_when(
         grepl("R1-|R-6|R-7.5|R-10|RLD", Zone_Code) ~ 35,
         grepl("R-12|R-18|R-22", Zone_Code)        ~ 35,
@@ -116,7 +96,6 @@ if (file.exists(base_cache_file)) {
         grepl("IH|IL|ML|IR", Zone_Code)           ~ 100, 
         TRUE                                      ~ 35   
       ),
-      
       Front_Setback_Ft = case_when(
         grepl("R1-20|R1-10", Zone_Code)           ~ 20,
         grepl("R1-5|R1-6|R1-7.5|R-6|R-7.5", Zone_Code) ~ 10, 
@@ -126,94 +105,19 @@ if (file.exists(base_cache_file)) {
       )
     )
   
-  # Package base spatial datasets together into a single RDS bundle file
   cat("Exporting base spatial snapshot to disk to speed up next code runs...\n")
   saveRDS(list(lots=lots, zoning_cleaned=zoning_cleaned, ugabnd=ugabnd, lots_with_rules=lots_with_rules), file = base_cache_file)
 }
 
 # =========================================================================
-# 3d. ECONOMIC PIPELINE: ACS DEMOGRAPHIC MATCH & DEMAND INDICES
-# =========================================================================
-cat("Parsing IPUMS NHGIS data columns to compile neighborhood viability matrices...\n")
-
-# Ingest your downloaded IPUMS tabular file using your exact dictionary mappings
-nhgis_raw <- read.csv("C:/Users/gmann/Downloads/nhgis_csv/nhgis0015_ds273_20245_tract.csv", 
-                      stringsAsFactors = FALSE)
-
-# Filter, rename, and engineer structural proxies from the codebook columns
-nhgis_indicators <- nhgis_raw %>%
-  select(
-    GISJOIN,
-    # 1. Income baselines
-    Tract_Med_Inc_Total = AVF7E001,  # Table 10: Median household income - Total
-    Tract_Med_Inc_Owner = AVF7E002,  # Table 10: Median household income - Owners
-    Tract_Med_Inc_Rent  = AVF7E003,  # Table 10: Median household income - Renters
-    
-    # 2. Components for Family Formation Proxy (Table 8: Presence of own children under 18)
-    Owner_Married_Kids  = AVF3E005,  
-    Rent_Married_Kids   = AVF3E018,  
-    Owner_Single_Parents= AVF3E009,  
-    Rent_Single_Parents = AVF3E022,  
-    Tract_Total_Units   = AVF3E001,  # Total households baseline
-    
-    # 3. Components for Infill Product Match Proxy (Table 3: Household type by structure)
-    Family_Multi_Unit   = AU5XE005,  # Married couple family in 2+ unit multi-family structures
-    Single_Multi_Unit   = AU5XE010,  # Male parent in 2+ unit structures
-    Female_Multi_Unit   = AU5XE014,  # Female parent in 2+ unit structures
-    NonFam_Multi_Unit   = AU5XE018,  # Non-family single/roommate householders in 2+ unit structures
-    
-    # 4. Components for Generational Home Equity Wealth Proxy (Table 7: Median home value)
-    Tract_Med_Home_Value= AVFVE001   
-  ) %>%
-  mutate(
-    # Clean up financial records to handle suppressed zero/null markers cleanly
-    Tract_Med_Inc_Total = as.numeric(Tract_Med_Inc_Total),
-    Tract_Med_Inc_Rent  = as.numeric(Tract_Med_Inc_Rent),
-    Tract_Med_Home_Value= as.numeric(Tract_Med_Home_Value),
-    
-    # INDICES ENGINEERING:
-    # A. Family Formation Demand Ratio: Percent of neighborhood households raising children
-    Family_Formation_Rate = ((Owner_Married_Kids + Rent_Married_Kids + Owner_Single_Parents + Rent_Single_Parents) / 
-                               pmax(1, Tract_Total_Units)) * 100,
-    
-    # B. Infill Multi-Family Absorption Score: Counts concentration of residents currently in apartments/multiplexes
-    Apartment_Absorption_Score = Family_Multi_Unit + Single_Multi_Unit + Female_Multi_Unit + NonFam_Multi_Unit
-  ) %>%
-  select(GISJOIN, Tract_Med_Inc_Total, Tract_Med_Inc_Rent, Tract_Med_Home_Value, Family_Formation_Rate, Apartment_Absorption_Score)
-
-# -------------------------------------------------------------------------
-# DATABASE INTEGRATION STEP (Executed instantly inside Section 5 Pipeline)
-# -------------------------------------------------------------------------
-# Merging variables lot-by-lot using your tax lot's built-in CensusTrac code
-lots_capacity_model <- lots_capacity_model %>%
-  mutate(
-    Census_Int   = as.numeric(CensusTrac),
-    Census_Int   = ifelse(Census_Int == 0, NA, Census_Int),
-    Tract_String = sprintf("%06d", Census_Int * 100),
-    GISJOIN_Key  = paste0("G5300110", Tract_String)
-  ) %>%
-  # Instantaneous relational attribute database link step (Vector left join)
-  left_join(nhgis_indicators, by = c("GISJOIN_Key" = "GISJOIN")) %>%
-  mutate(
-    # Fallback safety variables to handle edge-case null tract errors uniformly
-    Tract_Med_Inc_Total = ifelse(is.na(Tract_Med_Inc_Total), 85000, Tract_Med_Inc_Total),
-    Tract_Med_Inc_Rent  = ifelse(is.na(Tract_Med_Inc_Rent), 55000, Tract_Med_Inc_Rent),
-    Tract_Med_Home_Value= ifelse(is.na(Tract_Med_Home_Value), 480000, Tract_Med_Home_Value),
-    Family_Formation_Rate = ifelse(is.na(Family_Formation_Rate), 25, Family_Formation_Rate)
-  )
-
-# =========================================================================
-# 4. ENVIRONMENT PROCESSING & CONSTRAINT MASK GENERATION
+# 4. ENVIRONMENT PROCESSING & CONSTRAINT FOOTPRINT EXCLUSIONS
 # =========================================================================
 final_cache_file <- file.path(output_dir, "processed_lots_capacity.rds")
 
 if (file.exists(final_cache_file)) {
-  
   cat("Found fully consolidated capacity model file. Loading cache instantly...\n")
   lots_capacity_model <- readRDS(final_cache_file)
-  
 } else {
-  
   cat("No final capacity cache found. Processing constraint intersections and economic variables...\n")
   
   load_raw_shp <- function(file_path) {
@@ -237,8 +141,8 @@ if (file.exists(final_cache_file)) {
   aquifer_df      <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Aquifer.shp")
   wui_proposed_df <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/WildlandUrbanInterfaceProposed.shp")
   
-  # Isolate extreme steep slopes (>= 40% based on Clark County Title 40 rules)
-  hard_slope_mask <- slopes_df %>% filter(grepl("40 - 100|greater than 100", desc_, ignore.case = TRUE)) %>% st_geometry() %>% st_union()
+  # Segregate severe constraints into hard exclusion geometries
+  hard_slope_mask  <- slopes_df %>% filter(grepl("40 - 100|greater than 100", desc_, ignore.case = TRUE)) %>% st_geometry() %>% st_union()
   slope_15_25_mask <- slopes_df %>% filter(grepl("15 - 25 percent", desc_, ignore.case = TRUE)) %>% st_geometry() %>% st_union()
   slope_25_40_mask <- slopes_df %>% filter(grepl("25 - 40 percent", desc_, ignore.case = TRUE)) %>% st_geometry() %>% st_union()
   
@@ -272,6 +176,36 @@ if (file.exists(final_cache_file)) {
   lots_slope_loss   <- calc_overlap_acres(lots_with_rules, hard_slope_mask) %>% rename(Critical_Slope_Acres = acres)
   lots_total_loss   <- calc_overlap_acres(lots_with_rules, master_exclusion_mask) %>% rename(Hard_Excluded_Acres = acres)
   
+  # -------------------------------------------------------------------------
+  # STEP C: INGEST AND CLEAN THE TABULAR IPUMS NHGIS INDICATORS
+  # -------------------------------------------------------------------------
+  cat("Parsing IPUMS NHGIS data columns to compile neighborhood demographic matrices...\n")
+  nhgis_raw <- read.csv("C:/Users/gmann/Downloads/nhgis_csv/nhgis0015_ds273_20245_tract.csv", stringsAsFactors = FALSE)
+  
+  nhgis_indicators <- nhgis_raw %>%
+    select(
+      GISJOIN,
+      Tract_Med_Inc_Total  = AVF7E001,  # Median Income: Total
+      Tract_Med_Inc_Rent   = AVF7E003,  # Median Income: Renters
+      Tract_Med_Home_Value = AVFVE001,  # Median Structure Home Value
+      Owner_Married_Kids   = AVF3E005,  # Demographic sub-counts for proxies
+      Rent_Married_Kids    = AVF3E018,  
+      Owner_Single_Parents = AVF3E009,  
+      Rent_Single_Parents  = AVF3E022,  
+      Tract_Total_Units    = AVF3E001,
+      Family_Multi_Unit    = AU5XE005,  # Structural housing type sub-counts
+      Single_Multi_Unit    = AU5XE010,  
+      Female_Multi_Unit    = AU5XE014,  
+      NonFam_Multi_Unit    = AU5XE018   
+    ) %>%
+    mutate(
+      Tract_Med_Inc_Total   = as.numeric(Tract_Med_Inc_Total),
+      Tract_Med_Inc_Rent    = as.numeric(Tract_Med_Inc_Rent),
+      Tract_Med_Home_Value  = as.numeric(Tract_Med_Home_Value),
+      Family_Formation_Rate = ((Owner_Married_Kids + Rent_Married_Kids + Owner_Single_Parents + Rent_Single_Parents) / pmax(1, Tract_Total_Units)) * 100,
+      Apartment_Absorption  = Family_Multi_Unit + Single_Multi_Unit + Female_Multi_Unit + NonFam_Multi_Unit
+    ) %>%
+    select(GISJOIN, Tract_Med_Inc_Total, Tract_Med_Inc_Rent, Tract_Med_Home_Value, Family_Formation_Rate, Apartment_Absorption)
   # =========================================================================
   # 5. PARCEL CAPACITY VOLUMETRIC CALCULATION & ECONOMIC ENGINE
   # =========================================================================
@@ -279,11 +213,6 @@ if (file.exists(final_cache_file)) {
   
   ASSUMED_AVG_STORY_HEIGHT <- 11  
   ASSUMED_AVG_UNIT_SIZE    <- 2000 # Updated size based on your new home median counts
-  
-  # Ingest your downloaded IPUMS NHGIS ACS Data Table
-  # Replace this file pathway with your exact localized text/csv download destination
-  nhgis_data <- read.csv("C:/Users/gmann/Downloads/nhgis_csv/nhgis0001_csv.csv", stringsAsFactors = FALSE) %>%
-    select(GISJOIN, Tract_Med_Inc = B19013e1)
   
   lots_capacity_model <- lots_with_rules %>%
     left_join(lots_wetland_loss, by = "prop_id") %>%
@@ -345,12 +274,19 @@ if (file.exists(final_cache_file)) {
       GISJOIN_Key              = paste0("G5300110", Tract_String)
     ) %>%
     # Connect demographics directly to the active dataset records without spatial cost
-    left_join(nhgis_data, by = c("GISJOIN_Key" = "GISJOIN")) %>%
-    mutate(Tract_Med_Inc = ifelse(is.na(Tract_Med_Inc), 85000, Tract_Med_Inc))
+    left_join(nhgis_indicators, by = c("GISJOIN_Key" = "GISJOIN")) %>%
+    mutate(
+      Tract_Med_Inc_Total   = ifelse(is.na(Tract_Med_Inc_Total), 85000, Tract_Med_Inc_Total),
+      Tract_Med_Inc_Rent    = ifelse(is.na(Tract_Med_Inc_Rent), 55000, Tract_Med_Inc_Rent),
+      Tract_Med_Home_Value  = ifelse(is.na(Tract_Med_Home_Value), 480000, Tract_Med_Home_Value),
+      Family_Formation_Rate = ifelse(is.na(Family_Formation_Rate), 25, Family_Formation_Rate),
+      Apartment_Absorption  = ifelse(is.na(Apartment_Absorption), 0, Apartment_Absorption)
+    )
   
   cat("Saving consolidated analysis data to final rds cache file...\n")
   saveRDS(lots_capacity_model, file = final_cache_file)
 }
+
 
 # =========================================================================
 # 6. CONSOLIDATE LOGICAL HOUSING TYPE ASSIGNMENT

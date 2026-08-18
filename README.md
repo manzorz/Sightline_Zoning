@@ -1,12 +1,13 @@
-# Clark County Zoning & Housing Capacity Model
+# Clark County Zoning & Capacity Model
 
-A reproducible spatial data science pipeline built in R to evaluate **net realizable housing headroom** across Clark County, Washington. This model moves beyond theoretical paper density to evaluate real-world buildable limits at the individual tax parcel scale.
+A reproducible spatial data science pipeline built in R to evaluate **Zoning-Constrained Housing Potential** and track **Net New Homes Allowed by Current Law** across Clark County, Washington. This model moves beyond theoretical paper density to evaluate real-world buildable limits at the individual tax parcel scale by combining 12 environmental vector layers with neighborhood-level IPUMS NHGIS demographic data.
 
 ---
 
 ## Model Architecture & Core Logic
 
 The pipeline processes property data through a multi-tiered **Spatial, Volumetric, and Jurisdictional Reduction Model**:
+
 
 [ Total Parcel Surface Area ]
               │
@@ -16,18 +17,26 @@ The pipeline processes property data through a multi-tiered **Spatial, Volumetri
               ▼  (Apply Dimensional Yard Setbacks and Buffers)
 [ Buildable Lot Footprint ]
               │
-              ▼  (Multiply by Floor-Area Ratios & Story Heights)
+              ▼  (Multiply by Floor-Area Ratios & Story Heights Capped at 7)
 [ Three-Dimensional Building Envelope ]
               │
-              ▼  (Enforce Unit Sizes and Density Limits via pmin)
-[ Net Realizable Housing Capacity Headroom ]
+              ▼  (Enforce 2,000 SqFt Unit Sizes and Density Caps via pmin)
+[ Net New Homes Allowed by Current Law ]
 
+
+---
+
+
+### Reference Baselines & Remaining Potential Capacity Matrix
+Below is the lot-level analysis output tracking remaining unit capacity across the county landscape:
+
+![Zoning Capacity Gradient Map](image_TzczPt.png)
 
 ---
 
 ## Data Portfolio & Layer Classifications
 
-The model ingests 14 distinct regional data layers and processes them based on their legal planning severity:
+The model ingests 14 distinct regional data layers and processes them based on their legal planning severity and jurisdictional structures:
 
 ### 1. Absolute Spatial Prohibitions (Footprint drops to 0)
 * **`TaxlotsPublic.shp`**: Base property tax parcel bounds.
@@ -40,16 +49,27 @@ The model ingests 14 distinct regional data layers and processes them based on t
 * **`Slopes.shp`** *(Filtered)*: Extreme topography **exceeding 40% slope**.
 
 ### 2. Sovereign Cutouts (Jurisdictional Exclusions)
-* **`TribalLands.shp`**: Native American sovereign lands. This layer removes parcels from municipal housing capacity metrics since local city/county codes do not apply.
+* **`TribalLands.shp`**: Native American sovereign lands. This layer removes parcels from local municipal housing capacity metrics since local city/county codes do not legally apply.
 
 ### 3. Mitigable Engineering Constraints (Preserves Land, Injects Financial Premiums)
 * **`Slopes.shp`** *(Filtered)*: Mild rolling gradients.
-  * **15–25% Slope**: Injects a placeholder premium of **+$15/sqft** for basic terracing.
-  * **25–40% Slope**: Injects a placeholder premium of **+$35/sqft** for structural piers/stilts.
-* **`ErosionHazard.shp`**: Fragile soils requiring shoring (**+$12/sqft**).
-* **`Liquefaction.shp`**: Earthquake-fluid soils requiring deep foundational pilings (**+$25/sqft**).
-* **`Aquifer.shp`**: Critical recharges requiring vault filtration networks (**+$8/sqft**).
-* **`WildlandUrbanInterfaceProposed.shp`**: Wildfire hazard zones requiring structural hardening (**+$15/sqft**).
+  * **15–25% Slope**: Injects a placeholder premium of **+$15/sqft** for terraced foundations.
+  * **25–40% Slope**: Injects a placeholder premium of **+$35/sqft** for deep structural pier anchors.
+* **`ErosionHazard.shp`**: Fragile soils requiring advanced grading shoring (**+$12/sqft**).
+* **`Liquefaction.shp`**: Earthquake-fluid soils requiring deep foundational structural pilings (**+$25/sqft**).
+* **`Aquifer.shp`**: Critical recharges requiring underground vault stormwater filtration networks (**+$8/sqft**).
+* **`WildlandUrbanInterfaceProposed.shp`**: Wildfire hazard zones requiring Class A fire-resistant building envelope hardening (**+$15/sqft**).
+
+---
+
+## Integrated IPUMS NHGIS Demographic Indicators
+
+To transition from legal capacity to economic demand forecasting, the pipeline integrates 5-Year ACS Estimates at the Census Tract level using an instantaneous vector text `left_join` on matched `GISJOIN` keys:
+
+* **Purchasing Power Tracking:** Integrates median household incomes separated by owner and renter tenure status to evaluate neighborhood economic absorption limits.
+* **Family Formation Trajectory:** Monitors the ratio of married couples and single parents raising young children under 18 to align zoning targets with actual housing product type needs.
+* **Infill Absorption Score:** Measures the baseline neighborhood concentration of residents currently occupying multi-family configurations (2+ unit structures) to identify high-density alignment hotspots.
+* **Generational Home Equity Proxy:** Tracks median owner-occupied property values against the structural age of the housing stock to proxy localized generational down-payment equity reserves.
 
 ---
 
@@ -57,21 +77,11 @@ The model ingests 14 distinct regional data layers and processes them based on t
 
 The script processes vector data frames simultaneously and exports high-resolution metrics directly to your output drive:
 
-### Map 1: Growth Potential Baseline
-Maps macro zoning shapes based on whether they contain any remaining property-level capacity.
-![Zoning Limitations Categorical](graphics/Zoning_Limitations_Categorical.png)
-
-### Map 2: Hazard-Adjusted Headroom Gradient
-Tracks net realizable new home capacity lot-by-lot. Areas hitting regulatory ceilings or physical restrictions fade to grey, while active development nodes scale from yellow to intense red.
-![Zoning Headroom Gradient](graphics/Zoning_Headroom_Gradient.png)
-
-### Map 3: Housing Footprint Matrix
-Splits the county landscape into a binary view of legal development allowances. It highlights where housing can exist versus where it is barred by policy.
-![Zoning Residential Footprint Matrix](graphics/Zoning_Residential_Footprint_Matrix.png)
-
-### Map 4: Commercial & Mixed-Use Expansion Audit
-Visualizes the expanded capacity unlocked across downtown, village, and town center codes. It captures hidden vertical multi-family capacity that standard models miss.
-![Zoning MixedUse Housing Additions](graphics/Zoning_MixedUse_Housing_Additions.png)
+* **Map 1 (`Zoning_Limitations_Categorical.png`)**: Maps macro zoning shapes based on whether they contain any remaining property-level capacity left to expand.
+* **Map 2 (`Zoning_Headroom_Gradient.png`)**: Tracks net realizable new home capacity lot-by-lot, scaling from light yellow up to intense red.
+* **Map 3 (`Zoning_Residential_Footprint_Matrix.png`)**: Splits the county landscape into a high-contrast binary view of legal development allowances (Violet vs. Periwinkle).
+* **Map 4 (`Zoning_MixedUse_Vancouver_Zoom.png`)**: Zoomed perspective isolating urban core parcel adjustments unlocked by capturing vertical multi-family allowances in commercial hubs.
+* **Map 5 (`Zoning_MixedUse_Housing_Additions.png`)**: County-wide view showing downtown, village, and town center village codes that legally permit vertical multi-family housing.
 
 ---
 
@@ -82,9 +92,9 @@ The pipeline generates two production `.csv` tables detailing spatial constraint
 1. **`City_UGB_Unified_Housing_Capacity_Report.csv`**
    * Tracks total viable new housing units per city.
    * Quantifies exact unit capacity lost to environmental limits.
-2. **`City_UGB_Housing_Loss_Constraint_Attibility.csv`**
+2. **`City_UGB_Housing_Loss_Constraint_Attribution.csv`**
    * Disaggregates capacity losses by constraint type.
-   * Tracks losses from wetlands, slopes, and cemeteries.
+   * Tracks losses from vector wetlands, steep slopes, and cemeteries.
 
 ---
 
@@ -100,4 +110,4 @@ install.packages(c("sf", "dplyr", "ggplot2", "viridis", "terra", "exactextractr"
 1. Open your background workspace session.
 2. Clear active environments using `rm(list = ls())`.
 3. Update file directories in **Section 1**.
-4. Execute the script to run calculations and export assets.
+4. Execute the script to run calculations, display live graphics in your RStudio Plots Pane, and export assets.
