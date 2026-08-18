@@ -336,15 +336,31 @@ map_gradient <- ggplot() +
   geom_sf(data = filter(lots_gradient, !is.na(Headroom_Display)), aes(fill = Headroom_Display), color = NA) +
   geom_sf(data = city_outlines, fill = NA, color = "#4A4A4A", size = 0.5) +
   geom_sf_text(data = city_labels, aes(label = City), color = "black", fontface = "bold", size = 3, alpha = 0.6, check_overlap = TRUE) +
-  scale_fill_gradient(low = "#FFFFE0", high = "#FF0000", name = "Net viable\nnew homes\n(Adjusted Footprint)", na.value = "#D3D3D3") +
+  scale_fill_gradient(
+    low = "#FFFFE0", 
+    high = "#FF0000", 
+    
+    # Using \n breaks the long sentence into a neat, left-aligned vertical stack
+    name = paste0("Remaining Potential\n",
+                  "Housing Within\n",
+                  "Existing Zoning\n",
+                  "Limitations\n",
+                  "(Net New Units)"), 
+    
+    na.value = "#D3D3D3"
+  ) +
   labs(
     title = "Net Realizable Housing Headroom Gradient Map", 
     subtitle = "Lot-level units accounting for zoning parameters, existing homes, environmental traits, and sovereign lands"
   ) +
-  theme_minimal() + theme(panel.grid = element_blank(), axis.text = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank(), legend.position = "right")
+  theme_minimal() +
+  theme(panel.grid = element_blank(), axis.text = element_blank(),
+        axis.title.x = element_blank(), axis.title.y = element_blank(),
+        legend.position = "right")
 
 print(map_gradient)
-ggsave(filename = file.path(output_dir, "Zoning_Headroom_Gradient.png"), plot = map_gradient, width = 10, height = 8, dpi = 300, bg = "white")
+ggsave(filename = file.path(output_dir, "Zoning_Headroom_Gradient.png"),
+       plot = map_gradient, width = 10, height = 8, dpi = 300, bg = "white")
 
 # --- GRAPHIC 3: Residential Footprint Matrix ---
 zoning_matrix_data <- zoning_cleaned %>%
@@ -364,60 +380,57 @@ print(map_residential)
 
 ggsave(filename = file.path(output_dir, "Zoning_Residential_Footprint_Matrix.png"), plot = map_residential, width = 10, height = 8, dpi = 300, bg = "white")
 
-# --- GRAPHIC 4: Dan's South Vancouver Mixed-Use Correction Map ---
-cat("Generating South Vancouver mixed-use housing stock validation map for Dan...\n")
+# --- GRAPHIC 4: Vancouver Urban Core Mixed-Use Expansion Zoom Map ---
+cat("Generating Vancouver urban core mixed-use capacity addition zoom map...\n")
 
-# Isolate the exact parcels that were unlocked exclusively by adding the commercial keywords
-dan_map_data <- lots_capacity_model %>%
+# 1. Define the baseline restrictive single-family/pure multi-family keyword array
+restrictive_res_keywords <- "Residential|Resid|Single-family|Single Family|Multifamily|Multiple-family|Mobile Home|MHP|MDR|LDR|HDR|RLD"
+
+# 2. Flag parcels that are ONLY caught by the expanded mixed-use/commercial keyword array
+lots_mixed_use_zoom <- lots_capacity_model %>%
   mutate(
-    # Old baseline: Strict residential-only terms
-    Old_Regex_Res = grepl("Residential|Resid|Single-family|Single Family|Multifamily|Multiple-family|Mobile Home|MHP|MDR|LDR|HDR|RLD", 
-                          desc_, ignore.case = TRUE) & 
+    Is_Baseline_Residential = grepl(restrictive_res_keywords, desc_, ignore.case = TRUE),
+    Is_Expanded_Residential = grepl(res_keywords, desc_, ignore.case = TRUE) & 
       !grepl("Airport/Residential|Heavy Industrial|Light Industrial", desc_, ignore.case = TRUE),
     
-    # New baseline: Includes expanded commercial/mixed-use village keywords
-    New_Regex_Res = grepl(res_keywords, desc_, ignore.case = TRUE) & 
-      !grepl("Airport/Residential|Heavy Industrial|Light Industrial", desc_, ignore.case = TRUE),
-    
-    # Flag the parcels that were unlocked by the update
-    Zoning_Correction_Status = case_when(
-      New_Regex_Res & !Old_Regex_Res ~ "Newly Unlocked Mixed-Use Housing Stock",
-      New_Regex_Res & Old_Regex_Res  ~ "Existing Baseline Residential",
-      TRUE                            ~ "Pure Commercial / Industrial / Other"
+    # Isolate the exact parcels added by the zoning classification expansion
+    Addition_Status = case_when(
+      Is_Baseline_Residential & Is_Expanded_Residential ~ "Baseline Residential Stock",
+      !Is_Baseline_Residential & Is_Expanded_Residential ~ "Added via Commercial/Mixed-Use Expansion",
+      TRUE                                               ~ "Non-Residential / Pure Industrial / Parks"
     )
   )
 
-# Build the high-contrast validation map
-map_dan_vancouver <- ggplot() +
-  # 1. Base Layer: Solid color fills for all parcels (color = NA removes parcel lines for speed)
-  geom_sf(data = dan_map_data, aes(fill = Zoning_Correction_Status), color = NA) +
+# 3. Render the focused urban core zoom-in map configuration
+map_vancouver_zoom <- ggplot() +
+  # Draw all parcels categorized by their addition status (color = NA avoids line grid noise)
+  geom_sf(data = lots_mixed_use_zoom, aes(fill = Addition_Status), color = NA) +
   
-  # 2. City Boundary Overlay
-  geom_sf(data = city_outlines, fill = NA, color = "#4A4A4A", size = 0.6, linetype = "solid") +
+  # Overlay city limits to provide structural geographic anchors
+  geom_sf(data = city_outlines, fill = NA, color = "#4A4A4A", size = 0.5) +
   
-  # 3. Targeted City Text Label
-  geom_sf_text(data = filter(city_labels, City == "Vancouver"), aes(label = City), 
-               color = "black", fontface = "bold", size = 4, alpha = 0.7) +
+  # Add semi-transparent city headers pushed 4,000 feet above boundaries
+  geom_sf_text(data = city_labels, aes(label = City), 
+               color = "black", fontface = "bold", size = 3, alpha = 0.6, check_overlap = TRUE) +
   
-  # Custom validation color scheme highlighting the precise delta Dan asked about
+  # Custom manual color fills to highlight additions clearly
   scale_fill_manual(
     values = c(
-      "Newly Unlocked Mixed-Use Housing Stock" = "#E66101", # High-contrast warning orange
-      "Existing Baseline Residential"          = "#B19FF1", # Light Violet background
-      "Pure Commercial / Industrial / Other"   = "#F7F7F7"  # Clean faint grey for context
+      "Added via Commercial/Mixed-Use Expansion"  = "#FF0000",  # Bright Red
+      "Baseline Residential Stock"                = "#B19FF1",  # Soft Violet
+      "Non-Residential / Pure Industrial / Parks" = "#CCCCFF"  # Pale Periwinkle
     ),
-    name = "Zoning Correction Audit"
+    name = "Inventory Status"
   ) +
   
-  # Zooming the camera framework directly onto South Vancouver coordinates
-  # (Based on standard Washington South NAD83 survey foot extents near the Columbia River)
-  coord_sf(xlim = c(1075000, 1100000), ylim = c(1100000, 1300000), expand = FALSE) +
+  # CRITICAL EXTENT FIX: Defines bounding box coordinates inside EPSG 2927 (ftUS) space for Vancouver's grid
+  # Bypasses the narrow crop crash by targeting the southwest core of the county layout
+  coord_sf(xlim = c(1060000, 1115000), ylim = c(70000, 145000), expand = FALSE) +
   
-  # Policy titles addressing Dan's exact critique
   labs(
-    title = "South Vancouver Mixed-Use Housing Stock Correction",
-    subtitle = "Highlighting multi-family apartment capacity previously obscured inside the Commercial land bucket",
-    caption = "Orange parcels highlight multi-family housing opportunities unlocked by updating regex definitions to include vertical mixed-use codes."
+    title = "Vancouver Urban Core Housing Inventory Expansion Focus",
+    subtitle = "Zoomed perspective isolating parcel adjustments unlocked by capturing vertical multi-family allowances in commercial hubs",
+    caption = "Bright red clusters highlight commercial, downtown, and town center village zones that legally permit vertical multi-family housing."
   ) +
   
   theme_minimal() + 
@@ -426,18 +439,25 @@ map_dan_vancouver <- ggplot() +
     axis.text = element_blank(), 
     axis.title.x = element_blank(), 
     axis.title.y = element_blank(), 
-    legend.position = "right",
-    plot.title = element_text(face = "bold", size = 14),
-    plot.subtitle = element_text(color = "#4A4A4A", size = 10)
+    legend.position = "bottom",
+    
+    # Align text relative to the plot panel bounds to match centered legend tracking
+    plot.title.position = "panel",
+    plot.caption.position = "panel",
+    
+    # Precise margin alignment parameters to anchor headers squarely above the legend container text
+    plot.title = element_text(face = "bold", size = 14, hjust = 0, margin = margin(t = 10, r = 0, b = 2, l = 85)),
+    plot.subtitle = element_text(color = "#4A4A4A", size = 10, hjust = 0, margin = margin(t = 0, r = 0, b = 10, l = 85)),
+    plot.caption = element_text(color = "#4A4A4A", size = 8, hjust = 0, margin = margin(t = 10, r = 0, b = 10, l = 85))
   )
 
-# Print cleanly to your RStudio Plot Pane for immediate inspection
-print(map_dan_vancouver)
+# Print cleanly to your active RStudio Plot Viewer Pane for immediate visual verification
+print(map_vancouver_zoom)
 
-# Save the high-res file to your documents folder
+# Save the graphic file to your local documents directory
 ggsave(
-  filename = file.path(output_dir, "Dan_South_Vancouver_MixedUse_Correction.png"), 
-  plot = map_dan_vancouver, 
+  filename = file.path(output_dir, "Zoning_MixedUse_Vancouver_Zoom.png"), 
+  plot = map_vancouver_zoom, 
   width = 10, 
   height = 8, 
   dpi = 300, 
@@ -445,7 +465,7 @@ ggsave(
 )
 
 # --- GRAPHIC 5: County-Wide Commercial & Mixed-Use Housing Stock Expansion ---
-cat("Generating county-wide commercial and mixed-use capacity addition map for Dan...\n")
+cat("Generating county-wide commercial and mixed-use capacity addition map...\n")
 
 # 1. Define the baseline restrictive single-family/pure multi-family keyword array
 restrictive_res_keywords <- "Residential|Resid|Single-family|Single Family|Multifamily|Multiple-family|Mobile Home|MHP|MDR|LDR|HDR|RLD"
@@ -467,22 +487,16 @@ lots_mixed_use_additions <- lots_capacity_model %>%
 
 # 3. Render the comprehensive county-wide addition map
 map_mixed_use_additions <- ggplot() +
-  # Draw all parcels categorized by their addition status (color = NA avoids layout boundary grid noise)
   geom_sf(data = lots_mixed_use_additions, aes(fill = Addition_Status), color = NA) +
-  
-  # Overlay city limits to provide structural geographic anchors
   geom_sf(data = city_outlines, fill = NA, color = "#4A4A4A", size = 0.5) +
-  
-  # Add semi-transparent city headers pushed 4,000 feet above boundaries
   geom_sf_text(data = city_labels, aes(label = City), 
                color = "black", fontface = "bold", size = 3, alpha = 0.6, check_overlap = TRUE) +
   
-  # Custom manual color fills to highlight county-wide additions clearly
   scale_fill_manual(
     values = c(
-      "Added via Commercial/Mixed-Use Expansion" = "#FF0000",  # Bright Red to highlight inventory corrections
-      "Baseline Residential Stock"               = "#B19FF1",  # Soft Violet background for baseline housing
-      "Non-Residential / Pure Industrial / Parks" = "#CCCCFF"  # Pale Periwinkle for locked non-housing lands
+      "Added via Commercial/Mixed-Use Expansion"  = "#FF0000",  # Bright Red
+      "Baseline Residential Stock"                = "#B19FF1",  # Soft Violet
+      "Non-Residential / Pure Industrial / Parks" = "#CCCCFF"  # Pale Periwinkle
     ),
     name = "Inventory Status"
   ) +
@@ -500,11 +514,18 @@ map_mixed_use_additions <- ggplot() +
     axis.title.x = element_blank(), 
     axis.title.y = element_blank(), 
     legend.position = "bottom",
-    plot.title = element_text(face = "bold", size = 14),
-    plot.subtitle = element_text(color = "#4A4A4A", size = 10)
+    
+    # Align text relative to the plot panel bounds to match centered legend tracking
+    plot.title.position = "panel",
+    plot.caption.position = "panel",
+    
+    # Precise margin alignment parameters to anchor headers squarely above the legend container text
+    plot.title = element_text(face = "bold", size = 14, hjust = 0, margin = margin(t = 10, r = 0, b = 2, l = 85)),
+    plot.subtitle = element_text(color = "#4A4A4A", size = 10, hjust = 0, margin = margin(t = 0, r = 0, b = 10, l = 85)),
+    plot.caption = element_text(color = "#4A4A4A", size = 8, hjust = 0, margin = margin(t = 10, r = 0, b = 10, l = 85))
   )
 
-# Print to your active RStudio Plot Viewer Pane
+# Print to your active RStudio Plot Viewer Pane for immediate proofing
 print(map_mixed_use_additions)
 
 # Save the graphic file to your local documents directory
