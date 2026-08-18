@@ -4,9 +4,28 @@ A reproducible spatial data science pipeline built in R to evaluate **Zoning-Con
 
 ---
 
+## Data Sourcing & Citations
+
+### 1. Spatial Boundary & Parcel Layers
+All base geography shapes, tax lots, and planning bounds are sourced from the **Clark County Open Data Portal**:
+* **Source Hub:** [Clark County Digital GIS Data Download](https://hub-clarkcountywa.opendata.arcgis.com/pages/digital-gis-data-download)
+
+### 2. Demographic & Economic Baseline Data
+Tabular tract-level socioeconomic metrics and historical shapefile reference frameworks are obtained via IPUMS NHGIS.
+
+* **Academic Research & Publication Citation:**
+  > Jonathan Schroeder, David Van Riper, Steven Manson, Grace Cooper, Zachary Krause, Tracy Kugler, Tsu Zhu, and Steven Ruggles. IPUMS National Historical Geographic Information System: Version 21.0 [dataset]. Minneapolis, MN: IPUMS. 2026. http://doi.org/10.18128/D050.V21.0
+
+* **Policy Briefs, Online Media, & General Press Citation:**
+  > IPUMS NHGIS, University of Minnesota, www.nhgis.org
+
+---
+
 ## Model Architecture & Core Logic
 
 The pipeline processes property data through a multi-tiered **Spatial, Volumetric, and Jurisdictional Reduction Model**:
+
+
 
 <pre>
 [ Total Parcel Surface Area ]
@@ -43,7 +62,27 @@ The pipeline processes property data through a multi-tiered **Spatial, Volumetri
 ### Reference Baselines & Remaining Potential Capacity Matrix
 Below is the lot-level analysis output tracking remaining unit capacity across the county landscape:
 
-<img width="3000" height="2400" alt="Zoning_Headroom_Gradient" src="https://github.com/user-attachments/assets/b7d55291-3eb8-448f-a594-0581fdd80fde" />
+![Zoning Capacity Gradient Map](image_TzczPt.png)
+
+---
+
+## Model Parameter Classifications & Sizing Assumptions
+
+The underlying calculation engine rejects a "one-size-fits-all" framework. It adjusts physical structure capacities and height limits dynamically across **four clear zone tiers** based on the properties found in your zoning `.dbf` attribute tables:
+
+| Zoning District Tier | Assumed Average Unit Size | Maximum Allowed Height | Maximum Story Cap | Built Product Type |
+| :--- | :--- | :--- | :--- | :--- |
+| **High Density / Urban Core** | **900 Sq Ft** | 60 to 75 Feet | **7 Stories** | Stacked flats / Podium mixed-use apartments |
+| **Medium Density / Apartments** | **1,200 Sq Ft** | 45 Feet | **4 Stories** | Garden walk-ups, multiplexes, & townhomes |
+| **Low Density / Single-Family** | **2,100 Sq Ft** | 35 Feet | **3 Stories** | Detached suburban residential layouts |
+| **Rural / Resource Lands** | **2,400 Sq Ft** | 35 Feet | **2 Stories** | Sprawling rural estates & farmhouses |
+
+### Additional Underlying Model Assumptions
+To maintain a defensible rough assessment of zoning impacts without succumbing to diminishing computational returns, the script asserts the following baseline constraints:
+* **Average Story Height:** Assumed at a fixed **11 feet** (shorthand for a standard 9-foot clear interior ceiling coupled with 2 feet of structural floor trusses, plumbing lines, and utility duct space).
+* **Yard Setback Deductions:** Net buildable polygon acreage is calculated using a dynamic scaling factor based on front yard rules (`Front_Setback_Ft`). Lots with a $\ge$ 20 ft setback lose 30% of their gross footprint area (`0.70` reduction multiplier); 15 ft setbacks lose 25% area (`0.75`); and tight $\le$ 10 ft setbacks preserve 85% of buildable lot space (`0.85`).
+* **Urban Core Density Exemptions:** In compliance with Clark County Unified Development Code (UDC) Title 40 incentive allowances, regulatory density caps (`UnitsPerAc`) are completely **waived (set to Infinity)** inside urban centers, village clusters, and mixed-use codes. The housing yield there is bounded strictly by the three-dimensional physical envelope of the building box.
+* **Cemetery Protections:** Any property parcel intersecting a known cemetery polygon layout undergoes an absolute zero-out override, dropping both its net construction capacity and potential new homes metrics to zero.
 
 ---
 
@@ -81,7 +120,7 @@ To transition from legal capacity to economic demand forecasting, the pipeline i
 
 * **Purchasing Power Tracking:** Integrates median household incomes separated by owner and renter tenure status to evaluate neighborhood economic absorption limits.
 * **Family Formation Trajectory:** Monitors the ratio of married couples and single parents raising young children under 18 to align zoning targets with actual housing product type needs.
-* **Infill Absorption Score:** Measures the baseline neighborhood concentration of residents currently occupying multi-family configurations (2+ unit structures) to identify high-density alignment hotspots.
+* **Infill大 Absorption Score:** Measures the baseline neighborhood concentration of residents currently occupying multi-family configurations (2+ unit structures) to identify high-density alignment hotspots.
 * **Generational Home Equity Proxy:** Tracks median owner-occupied property values against the structural age of the housing stock to proxy localized generational down-payment equity reserves.
 
 ---
@@ -122,5 +161,5 @@ install.packages(c("sf", "dplyr", "ggplot2", "viridis", "terra", "exactextractr"
 ### Execution Instructions:
 1. Open your background workspace session.
 2. Clear active environments using `rm(list = ls())`.
-3. Update file directories in **Section 1**.
-4. Execute the script to run calculations, display live graphics in your RStudio Plots Pane, and export assets.
+3. Update file directories in **`main_controller.R`**.
+4. Execute the script to run calculations, display live graphics in your RStudio 
