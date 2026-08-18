@@ -30,7 +30,7 @@ The pipeline processes property data through a multi-tiered **Spatial, Volumetri
 ### Reference Baselines & Remaining Potential Capacity Matrix
 Below is the lot-level analysis output tracking remaining unit capacity across the county landscape:
 
-![Zoning Capacity Gradient Map](image_TzczPt.png)
+![Zoning Capacity Gradient Map](Zoning_Headroom_Gradient.png)
 
 ---
 

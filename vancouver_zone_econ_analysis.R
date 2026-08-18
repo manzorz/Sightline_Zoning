@@ -185,15 +185,15 @@ if (file.exists(final_cache_file)) {
   nhgis_indicators <- nhgis_raw %>%
     select(
       GISJOIN,
-      Tract_Med_Inc_Total  = AVF7E001,  # Median Income: Total
-      Tract_Med_Inc_Rent   = AVF7E003,  # Median Income: Renters
-      Tract_Med_Home_Value = AVFVE001,  # Median Structure Home Value
-      Owner_Married_Kids   = AVF3E005,  # Demographic sub-counts for proxies
+      Tract_Med_Inc_Total  = AVF7E001,  
+      Tract_Med_Inc_Rent   = AVF7E003,  
+      Tract_Med_Home_Value = AVFVE001,  
+      Owner_Married_Kids   = AVF3E005,  
       Rent_Married_Kids    = AVF3E018,  
       Owner_Single_Parents = AVF3E009,  
       Rent_Single_Parents  = AVF3E022,  
       Tract_Total_Units    = AVF3E001,
-      Family_Multi_Unit    = AU5XE005,  # Structural housing type sub-counts
+      Family_Multi_Unit    = AU5XE005,  
       Single_Multi_Unit    = AU5XE010,  
       Female_Multi_Unit    = AU5XE014,  
       NonFam_Multi_Unit    = AU5XE018   
@@ -206,13 +206,13 @@ if (file.exists(final_cache_file)) {
       Apartment_Absorption  = Family_Multi_Unit + Single_Multi_Unit + Female_Multi_Unit + NonFam_Multi_Unit
     ) %>%
     select(GISJOIN, Tract_Med_Inc_Total, Tract_Med_Inc_Rent, Tract_Med_Home_Value, Family_Formation_Rate, Apartment_Absorption)
+  
   # =========================================================================
   # 5. PARCEL CAPACITY VOLUMETRIC CALCULATION & ECONOMIC ENGINE
   # =========================================================================
-  cat("Running final economic indices and parcel capacity calculations...\n")
+  cat("Running zoning-specific story, size, and density capacity calculations...\n")
   
   ASSUMED_AVG_STORY_HEIGHT <- 11  
-  ASSUMED_AVG_UNIT_SIZE    <- 2000 # Updated size based on your new home median counts
   
   lots_capacity_model <- lots_with_rules %>%
     left_join(lots_wetland_loss, by = "prop_id") %>%
@@ -229,51 +229,69 @@ if (file.exists(final_cache_file)) {
       # 1. DEDUCT SPATIAL FOOTPRINT ACREAGE FROM PARENT SHAPES (Preserves 15-40% slopes)
       Net_Lot_Acres         = pmax(0, Lot_Acres - Hard_Excluded_Acres),
       
-      # 2. MITIGABLE HAZARD INTERSECTIONS (Preserves acreage, injects cost multipliers)
+      # 2. MITIGABLE LIMIT INTERSECTIONS (Preserves acreage, injects cost multipliers)
       Has_Slope_15_25       = as.logical(st_intersects(geometry, slope_15_25_mask)),
       Has_Slope_25_40       = as.logical(st_intersects(geometry, slope_25_40_mask)),
-      Has_Erosion_Hazard    = as.logical(st_intersects(geometry, st_union(st_geometry(erosion_df)))),
+      Has_Erosion_Risk      = as.logical(st_intersects(geometry, st_union(st_geometry(erosion_df)))),
       Has_Liquefaction_Risk = as.logical(st_intersects(geometry, st_union(st_geometry(liq_df)))),
       Has_Aquifer_Protected = as.logical(st_intersects(geometry, st_union(st_geometry(aquifer_df)))),
       Has_WUI_Proposed      = as.logical(st_intersects(geometry, st_union(st_geometry(wui_proposed_df)))),
       
       Has_Slope_15_25       = ifelse(is.na(Has_Slope_15_25), FALSE, Has_Slope_15_25),
       Has_Slope_25_40       = ifelse(is.na(Has_Slope_25_40), FALSE, Has_Slope_25_40),
-      Has_Erosion_Hazard    = ifelse(is.na(Has_Erosion_Hazard), FALSE, Has_Erosion_Hazard),
+      Has_Erosion_Risk      = ifelse(is.na(Has_Erosion_Risk), FALSE, Has_Erosion_Risk),
       Has_Liquefaction_Risk = ifelse(is.na(Has_Liquefaction_Risk), FALSE, Has_Liquefaction_Risk),
       Has_Aquifer_Protected = ifelse(is.na(Has_Aquifer_Protected), FALSE, Has_Aquifer_Protected),
       Has_WUI_Proposed      = ifelse(is.na(Has_WUI_Proposed), FALSE, Has_WUI_Proposed),
       
-      # Calculate the cumulative cost premium matrix per square foot built
+      # Structural engineering premium cost placeholders ($ per square foot built)
       Added_Cost_Per_SqFt   = 0 + ifelse(Has_Slope_15_25, 15, 0) + ifelse(Has_Slope_25_40, 35, 0) + 
-        ifelse(Has_Erosion_Hazard, 12, 0) + ifelse(Has_Liquefaction_Risk, 25, 0) + 
+        ifelse(Has_Erosion_Risk, 12, 0) + ifelse(Has_Liquefaction_Risk, 25, 0) + 
         ifelse(Has_Aquifer_Protected, 8, 0) + ifelse(Has_WUI_Proposed, 15, 0),
       
-      # 3. VOLUMETRIC AND REGULATORY GEOMETRY REDUCTIONS
       Setback_Reduction_Factor = case_when(Front_Setback_Ft >= 20 ~ 0.70, Front_Setback_Ft == 15 ~ 0.75, Front_Setback_Ft <= 10 ~ 0.85, TRUE ~ 0.80),
       Net_Footprint_SqFt       = (Net_Lot_Acres * 43560) * Setback_Reduction_Factor,
       
-      # Enforce realistic multi-family cap matching regional 7-story limits
-      Max_Stories              = pmin(floor(Max_Height_Ft / ASSUMED_AVG_STORY_HEIGHT), 7),
+      # REFINEMENT 1: Assign Average Unit Sizes based on local legal zoning bands from .dbf text
+      Assumed_Unit_Size = case_when(
+        grepl("R-35|R-43|OR-43|HD-NS|Core|Village|Mixed use", desc_, ignore.case = TRUE)    ~ 900,  # Urban core flats
+        grepl("R-12|R-15|R-16|R-18|R-22|R-30|AR-|MF-|MDR|MDR-16", desc_, ignore.case = TRUE) ~ 1200, # Garden apartments/townhomes
+        grepl("R1-|R-4|R-6|R-7.5|R-10|RLD-|LDR|LD-NS", desc_, ignore.case = TRUE)            ~ 2100, # Suburban single-family
+        grepl("Rural|AG-|FR-|Gorge", desc_, ignore.case = TRUE)                               ~ 2400, # Rural residential tracts
+        TRUE                                                                                 ~ 2100
+      ),
       
-      Max_Lot_Coverage_Pct     = case_when(grepl("R1-|R-6|R-7.5|R-10|RLD", desc_) ~ 0.40, grepl("R-|MF|OR", desc_) ~ 0.60, TRUE ~ 0.50),
+      # REFINEMENT 2: Calculate maximum allowed vertical stories varying with zoning districts
+      Max_Stories = case_when(
+        grepl("R-35|R-43|OR-43|HD-NS|Core|Village|Mixed use", desc_, ignore.case = TRUE)    ~ pmin(floor(Max_Height_Ft / ASSUMED_AVG_STORY_HEIGHT), 7),
+        grepl("R-12|R-15|R-16|R-18|R-22|R-30|AR-|MF-|MDR|MDR-16", desc_, ignore.case = TRUE) ~ pmin(floor(Max_Height_Ft / ASSUMED_AVG_STORY_HEIGHT), 4),
+        grepl("R1-|R-4|R-6|R-7.5|R-10|RLD-|LDR|LD-NS", desc_, ignore.case = TRUE)            ~ pmin(floor(Max_Height_Ft / ASSUMED_AVG_STORY_HEIGHT), 3),
+        grepl("Rural|AG-|FR-|Gorge", desc_, ignore.case = TRUE)                               ~ pmin(floor(Max_Height_Ft / ASSUMED_AVG_STORY_HEIGHT), 2),
+        TRUE                                                                                 ~ pmin(floor(Max_Height_Ft / ASSUMED_AVG_STORY_HEIGHT), 3)
+      ),
+      
+      Max_Lot_Coverage_Pct = case_when(grepl("R1-|R-6|R-7.5|R-10|RLD", desc_) ~ 0.40, grepl("R-|MF|OR", desc_) ~ 0.60, TRUE ~ 0.50),
       
       Max_Potential_Floor_Area = (Net_Footprint_SqFt * Max_Lot_Coverage_Pct) * Max_Stories,
-      Physical_Unit_Capacity   = floor(Max_Potential_Floor_Area / ASSUMED_AVG_UNIT_SIZE),
-      Regulatory_Density_Cap   = floor(Net_Lot_Acres * UnitsPerAc),
+      Physical_Unit_Capacity   = floor(Max_Potential_Floor_Area / Assumed_Unit_Size),
       
-      # 4. CHOKEPOINT CONSTRACTION INTERSECTION EVALUATION
+      # REFINEMENT 3: Waive regulatory density ceilings entirely for mixed-use commercial overlays per regional laws
+      Regulatory_Density_Cap = case_when(
+        grepl("Core|Village|Mixed use|MX|WMU|DC", desc_, ignore.case = TRUE) ~ Inf, 
+        TRUE                                                                 ~ floor(Net_Lot_Acres * UnitsPerAc)
+      ),
+      
+      # Chokepoint selector evaluation picking whichever constraint sets the baseline ceiling first
       MaxPossibleConstruction  = pmin(Physical_Unit_Capacity, Regulatory_Density_Cap),
       Net_Realizable_Homes     = pmax(0, MaxPossibleConstruction - Units),
       Is_Useless_Upzone        = ifelse(Regulatory_Density_Cap > Units & MaxPossibleConstruction <= Units, TRUE, FALSE),
       
-      # Format NHGIS text codes vector string parameters
+      # Format vector string keys to link directly to NHGIS datasets
       Census_Int               = as.numeric(CensusTrac),
       Census_Int               = ifelse(Census_Int == 0, NA, Census_Int),
       Tract_String             = sprintf("%06d", Census_Int * 100),
       GISJOIN_Key              = paste0("G5300110", Tract_String)
     ) %>%
-    # Connect demographics directly to the active dataset records without spatial cost
     left_join(nhgis_indicators, by = c("GISJOIN_Key" = "GISJOIN")) %>%
     mutate(
       Tract_Med_Inc_Total   = ifelse(is.na(Tract_Med_Inc_Total), 85000, Tract_Med_Inc_Total),
@@ -324,258 +342,379 @@ city_labels <- city_outlines %>%
   st_as_sf(coords = c("X", "Y"), crs = target_crs)
 
 # =========================================================================
-# EXTRA STEP: STRIP OUT CEMETERY FOOTPRINTS TO PREVENT ARTIFICIAL CAPACITY
+# 0. GLOBAL PIPELINE CONFIGURATION TOGGLE (Place at top of script)
 # =========================================================================
-cemeteries <- st_read("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Cemetery.shp") %>%
-  st_transform(target_crs) %>%
-  st_make_valid()
-
-lots_capacity_model <- lots_capacity_model %>%
-  mutate(
-    Intersects_Cemetery = as.logical(st_intersects(geometry, st_union(cemeteries))),
-    Intersects_Cemetery = ifelse(is.na(Intersects_Cemetery), FALSE, Intersects_Cemetery),
-    MaxPossibleConstruction = ifelse(Intersects_Cemetery, 0, MaxPossibleConstruction),
-    Net_Realizable_Homes    = ifelse(Intersects_Cemetery, 0, Net_Realizable_Homes)
-  )
+# Set to TRUE to print and save plots; FALSE completely skips graphic creation
+GENERATE_GRAPHICS <- TRUE 
 
 # =========================================================================
-# 8. VISUALIZATION AND GRAPHIC OUTPUT GENERATION
+# 8. VISUALIZATION AND GRAPHIC OUTPUT GENERATION (Sightline Institute Style)
 # =========================================================================
-
-# --- GRAPHIC 1: Zone-Level Growth Potential Summary ---
-zone_summary_layer <- lots_capacity_model %>%
-  group_by(Zoning_ID) %>%
-  summarise(geometry = st_union(geometry), Total_Net_Realizable = sum(Net_Realizable_Homes, na.rm = TRUE)) %>%
-  ungroup() %>%
-  mutate(Zoning_Status = ifelse(Total_Net_Realizable > 0, "Under Zoned Limit (Has Room)", "At/Over Zoned Limit"))
-
-map_categorical <- ggplot() +
-  geom_sf(data = zone_summary_layer, aes(fill = Zoning_Status), color = NA) +
-  geom_sf(data = city_outlines, fill = NA, color = "#4A4A4A", size = 0.5, linetype = "solid") +
-  geom_sf_text(data = city_labels, aes(label = City), color = "black", fontface = "bold", size = 3, alpha = 0.6, check_overlap = TRUE) +
-  scale_fill_manual(values = c("Under Zoned Limit (Has Room)" = "#21918c", "At/Over Zoned Limit" = "#CCCCFF"), name = "Zoning Limitations") +
-  theme_minimal() + theme(panel.grid = element_blank(), axis.text = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank(), legend.position = "bottom")
-
-# Print to RStudio Plot Viewer Pane
-print(map_categorical)
-
-# Save to Local Disk Storage Directory
-ggsave(filename = file.path(output_dir, "Zoning_Limitations_Categorical.png"), plot = map_categorical, width = 10, height = 8, dpi = 300, bg = "white")
-
-
-# --- GRAPHIC 2: Lot-Level ADJUSTED Realizable Headroom Gradient Map ---
-lots_gradient <- lots_capacity_model %>%
-  mutate(Headroom_Display = ifelse(Net_Realizable_Homes == 0, NA, Net_Realizable_Homes))
-
-map_gradient <- ggplot() +
-  geom_sf(data = lots_gradient, fill = "#D3D3D3", color = NA) +
-  geom_sf(data = filter(lots_gradient, !is.na(Headroom_Display)), aes(fill = Headroom_Display), color = NA) +
-  geom_sf(data = city_outlines, fill = NA, color = "#4A4A4A", size = 0.5) +
-  geom_sf_text(data = city_labels, aes(label = City), color = "black", fontface = "bold", size = 3, alpha = 0.6, check_overlap = TRUE) +
-  scale_fill_gradient(
-    low = "#FFFFE0", 
-    high = "#FF0000", 
-    
-    # Using \n breaks the long sentence into a neat, left-aligned vertical stack
-    name = paste0("Remaining Potential\n",
-                  "Housing Within\n",
-                  "Existing Zoning\n",
-                  "Limitations\n",
-                  "(Net New Units)"), 
-    
-    na.value = "#D3D3D3"
-  ) +
-  labs(
-    title = "Net Realizable Housing Headroom Gradient Map", 
-    subtitle = "Lot-level units accounting for zoning parameters, existing homes, environmental traits, and sovereign lands"
-  ) +
-  theme_minimal() +
-  theme(panel.grid = element_blank(), axis.text = element_blank(),
-        axis.title.x = element_blank(), axis.title.y = element_blank(),
-        legend.position = "right")
-
-print(map_gradient)
-ggsave(filename = file.path(output_dir, "Zoning_Headroom_Gradient.png"),
-       plot = map_gradient, width = 10, height = 8, dpi = 300, bg = "white")
-
-# --- GRAPHIC 3: Residential Footprint Matrix ---
-zoning_matrix_data <- zoning_cleaned %>%
-  left_join(st_drop_geometry(lots_capacity_model) %>% group_by(Zoning_ID) %>% summarise(Units = sum(Units, na.rm=TRUE)), by="Zoning_ID") %>%
-  mutate(Is_Residential = ifelse(grepl(res_keywords, desc_, ignore.case = TRUE) & !grepl("Airport/Residential|Heavy Industrial|Light Industrial", desc_, ignore.case = TRUE), 
-                                 "Residential / Mixed-Use Zoning", "Pure Commercial / Industrial / Parks"))
-
-map_residential <- ggplot() +
-  geom_sf(data = zoning_matrix_data, aes(fill = Is_Residential), color = NA) +
-  geom_sf(data = city_outlines, fill = NA, color = "#4A4A4A", size = 0.5) +
-  geom_sf_text(data = city_labels, aes(label = City), color = "black", fontface = "bold", size = 3, alpha = 0.6, check_overlap = TRUE) +
-  scale_fill_manual(values = c("Residential / Mixed-Use Zoning" = "#B19FF1", "Pure Commercial / Industrial / Parks" = "#CCCCFF"), name = "Regulatory Framework") +
-  theme_minimal() + theme(panel.grid = element_blank(), axis.text = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank(), legend.position = "bottom")
-
-# Print to RStudio Plot Viewer Pane
-print(map_residential)
-
-ggsave(filename = file.path(output_dir, "Zoning_Residential_Footprint_Matrix.png"), plot = map_residential, width = 10, height = 8, dpi = 300, bg = "white")
-
-# --- GRAPHIC 4: Vancouver Urban Core Mixed-Use Expansion Zoom Map ---
-cat("Generating Vancouver urban core mixed-use capacity addition zoom map...\n")
-
-# 1. Define the baseline restrictive single-family/pure multi-family keyword array
-restrictive_res_keywords <- "Residential|Resid|Single-family|Single Family|Multifamily|Multiple-family|Mobile Home|MHP|MDR|LDR|HDR|RLD"
-
-# 2. Flag parcels that are ONLY caught by the expanded mixed-use/commercial keyword array
-lots_mixed_use_zoom <- lots_capacity_model %>%
-  mutate(
-    Is_Baseline_Residential = grepl(restrictive_res_keywords, desc_, ignore.case = TRUE),
-    Is_Expanded_Residential = grepl(res_keywords, desc_, ignore.case = TRUE) & 
-      !grepl("Airport/Residential|Heavy Industrial|Light Industrial", desc_, ignore.case = TRUE),
-    
-    # Isolate the exact parcels added by the zoning classification expansion
-    Addition_Status = case_when(
-      Is_Baseline_Residential & Is_Expanded_Residential ~ "Baseline Residential Stock",
-      !Is_Baseline_Residential & Is_Expanded_Residential ~ "Added via Commercial/Mixed-Use Expansion",
-      TRUE                                               ~ "Non-Residential / Pure Industrial / Parks"
+if (GENERATE_GRAPHICS) {
+  cat("Initiating Sightline-style graphic compilation loops...\n")
+  
+  # --- SIGHTLINE PALETTE DEFINITIONS ---
+  SIGHTLINE_FONT <- "sans"
+  COLOR_UNINCORPORATED <- "#F2F2F2" # Much lighter grey canvas background
+  COLOR_ZERO_CAPACITY  <- "#D3D3D3" # Distinguishable light neutral grey for lots with 0 capacity
+  
+  # Adjusted label offsets: Shifted text half font size downward from old ymax + 4000
+  city_labels_shifted <- city_labels %>%
+    mutate(geometry = geometry - c(0, 2000))
+  
+  # -------------------------------------------------------------------------
+  # --- GRAPHIC 1: Zone-Level Growth Potential Summary ---
+  # -------------------------------------------------------------------------
+  cat("Compiling Graphic 1: Zone-Level Limitations Baseline...\n")
+  
+  map_categorical <- ggplot() +
+    # Draw background unincorporated county base geometry in light neutral grey
+    geom_sf(
+      data = lots_capacity_model, 
+      fill = COLOR_UNINCORPORATED, 
+      color = NA
+    ) +
+    # Layer zone summary data blocks on top
+    geom_sf(
+      data = zone_summary_layer, 
+      aes(fill = Zoning_Status), 
+      color = NA
+    ) +
+    geom_sf(
+      data = city_outlines, 
+      fill = NA, 
+      color = "#4A4A4A", 
+      size = 0.5, 
+      linetype = "solid"
+    ) +
+    geom_sf_text(
+      data = city_labels_shifted, 
+      aes(label = City), 
+      color = "#222222", 
+      family = SIGHTLINE_FONT, 
+      fontface = "bold", 
+      size = 3, 
+      alpha = 0.8, 
+      check_overlap = TRUE
+    ) +
+    scale_fill_manual(
+      values = c(
+        "Under Zoned Limit (Has Room)" = "#21918c", 
+        "At/Over Zoned Limit"          = "#CCCCFF"
+      ), 
+      name = "Zoning Limitations"
+    ) +
+    labs(
+      title = "Zoning Limitations & Growth Potential", 
+      subtitle = "Zone-level capacity baseline aggregated from individual property parcel inventory constraints",
+      caption = "Source: Clark County GIS Atlas & Regulatory Database Policy Model Analysis."
+    ) +
+    theme_minimal(base_family = SIGHTLINE_FONT) + 
+    theme(
+      panel.grid = element_blank(), 
+      axis.text = element_blank(), 
+      axis.title = element_blank(), 
+      legend.position = "bottom",
+      plot.title.position = "panel",
+      plot.title = element_text(face = "bold", size = 14, color = "#111111", margin = margin(b = 4)),
+      plot.subtitle = element_text(color = "#555555", size = 10, margin = margin(b = 12)),
+      plot.caption = element_text(color = "#777777", size = 8, hjust = 0, margin = margin(t = 8))
     )
+  
+  print(map_categorical)
+  
+  ggsave(
+    filename = file.path(output_dir, "Zoning_Limitations_Categorical.png"), 
+    plot = map_categorical, 
+    width = 10, 
+    height = 8, 
+    dpi = 300, 
+    bg = "white"
   )
-
-# 3. Render the focused urban core zoom-in map configuration
-map_vancouver_zoom <- ggplot() +
-  # Draw all parcels categorized by their addition status (color = NA avoids line grid noise)
-  geom_sf(data = lots_mixed_use_zoom, aes(fill = Addition_Status), color = NA) +
   
-  # Overlay city limits to provide structural geographic anchors
-  geom_sf(data = city_outlines, fill = NA, color = "#4A4A4A", size = 0.5) +
+  # -------------------------------------------------------------------------
+  # --- GRAPHIC 2: Lot-Level Zoning-Constrained Housing Potential Gradient ---
+  # -------------------------------------------------------------------------
+  cat("Compiling Graphic 2: Capacity Gradient Map...\n")
   
-  # Add semi-transparent city headers pushed 4,000 feet above boundaries
-  geom_sf_text(data = city_labels, aes(label = City), 
-               color = "black", fontface = "bold", size = 3, alpha = 0.6, check_overlap = TRUE) +
-  
-  # Custom manual color fills to highlight additions clearly
-  scale_fill_manual(
-    values = c(
-      "Added via Commercial/Mixed-Use Expansion"  = "#FF0000",  # Bright Red
-      "Baseline Residential Stock"                = "#B19FF1",  # Soft Violet
-      "Non-Residential / Pure Industrial / Parks" = "#CCCCFF"  # Pale Periwinkle
-    ),
-    name = "Inventory Status"
-  ) +
-  
-  # CRITICAL EXTENT FIX: Defines bounding box coordinates inside EPSG 2927 (ftUS) space for Vancouver's grid
-  # Bypasses the narrow crop crash by targeting the southwest core of the county layout
-  coord_sf(xlim = c(1060000, 1115000), ylim = c(70000, 145000), expand = FALSE) +
-  
-  labs(
-    title = "Vancouver Urban Core Housing Inventory Expansion Focus",
-    subtitle = "Zoomed perspective isolating parcel adjustments unlocked by capturing vertical multi-family allowances in commercial hubs",
-    caption = "Bright red clusters highlight commercial, downtown, and town center village zones that legally permit vertical multi-family housing."
-  ) +
-  
-  theme_minimal() + 
-  theme(
-    panel.grid = element_blank(), 
-    axis.text = element_blank(), 
-    axis.title.x = element_blank(), 
-    axis.title.y = element_blank(), 
-    legend.position = "bottom",
-    
-    # Align text relative to the plot panel bounds to match centered legend tracking
-    plot.title.position = "panel",
-    plot.caption.position = "panel",
-    
-    # Precise margin alignment parameters to anchor headers squarely above the legend container text
-    plot.title = element_text(face = "bold", size = 14, hjust = 0, margin = margin(t = 10, r = 0, b = 2, l = 85)),
-    plot.subtitle = element_text(color = "#4A4A4A", size = 10, hjust = 0, margin = margin(t = 0, r = 0, b = 10, l = 85)),
-    plot.caption = element_text(color = "#4A4A4A", size = 8, hjust = 0, margin = margin(t = 10, r = 0, b = 10, l = 85))
-  )
-
-# Print cleanly to your active RStudio Plot Viewer Pane for immediate visual verification
-print(map_vancouver_zoom)
-
-# Save the graphic file to your local documents directory
-ggsave(
-  filename = file.path(output_dir, "Zoning_MixedUse_Vancouver_Zoom.png"), 
-  plot = map_vancouver_zoom, 
-  width = 10, 
-  height = 8, 
-  dpi = 300, 
-  bg = "white"
-)
-
-# --- GRAPHIC 5: County-Wide Commercial & Mixed-Use Housing Stock Expansion ---
-cat("Generating county-wide commercial and mixed-use capacity addition map...\n")
-
-# 1. Define the baseline restrictive single-family/pure multi-family keyword array
-restrictive_res_keywords <- "Residential|Resid|Single-family|Single Family|Multifamily|Multiple-family|Mobile Home|MHP|MDR|LDR|HDR|RLD"
-
-# 2. Flag parcels that are ONLY caught by the expanded mixed-use/commercial keyword array
-lots_mixed_use_additions <- lots_capacity_model %>%
-  mutate(
-    Is_Baseline_Residential = grepl(restrictive_res_keywords, desc_, ignore.case = TRUE),
-    Is_Expanded_Residential = grepl(res_keywords, desc_, ignore.case = TRUE) & 
-      !grepl("Airport/Residential|Heavy Industrial|Light Industrial", desc_, ignore.case = TRUE),
-    
-    # Isolate the exact parcels added by the zoning classification expansion across the county
-    Addition_Status = case_when(
-      Is_Baseline_Residential & Is_Expanded_Residential ~ "Baseline Residential Stock",
-      !Is_Baseline_Residential & Is_Expanded_Residential ~ "Added via Commercial/Mixed-Use Expansion",
-      TRUE                                               ~ "Non-Residential / Pure Industrial / Parks"
+  lots_gradient <- lots_capacity_model %>%
+    mutate(
+      Headroom_Display = ifelse(Net_Realizable_Homes == 0, NA, Net_Realizable_Homes)
     )
+  
+  map_gradient <- ggplot() +
+    # Base unincorporated backdrop
+    geom_sf(
+      data = lots_gradient, 
+      fill = COLOR_UNINCORPORATED, 
+      color = NA
+    ) +
+    # Zero capacity overlay
+    geom_sf(
+      data = filter(lots_gradient, is.na(Headroom_Display)), 
+      fill = COLOR_ZERO_CAPACITY, 
+      color = NA
+    ) +
+    # Realizable potential continuous layer
+    geom_sf(
+      data = filter(lots_gradient, !is.na(Headroom_Display)), 
+      aes(fill = Headroom_Display), 
+      color = NA
+    ) +
+    geom_sf(
+      data = city_outlines, 
+      fill = NA, 
+      color = "#4A4A4A", 
+      size = 0.5
+    ) +
+    geom_sf_text(
+      data = city_labels_shifted, 
+      aes(label = City), 
+      color = "#222222", 
+      family = SIGHTLINE_FONT, 
+      fontface = "bold", 
+      size = 3, 
+      alpha = 0.8, 
+      check_overlap = TRUE
+    ) +
+    scale_fill_gradient(
+      low = "#FFFFE0", 
+      high = "#FF0000", 
+      name = "Zoning-Constrained\nHousing Potential\n(Net New Homes\nAllowed by Law)", 
+      na.value = COLOR_ZERO_CAPACITY
+    ) +
+    labs(
+      title = "Net Realizable Zoning-Constrained Housing Potential Map", 
+      subtitle = "Lot-level net unit headroom accounting for local setbacks, variable story caps, and environmental restrictions",
+      caption = "Note: Grey parcels represent land that has reached its effective cap on housing supply under current rules."
+    ) +
+    theme_minimal(base_family = SIGHTLINE_FONT) + 
+    theme(
+      panel.grid = element_blank(), 
+      axis.text = element_blank(), 
+      axis.title = element_blank(), 
+      legend.position = "right",
+      plot.title.position = "panel",
+      plot.title = element_text(face = "bold", size = 14, color = "#111111", margin = margin(b = 4)),
+      plot.subtitle = element_text(color = "#555555", size = 10, margin = margin(b = 12)),
+      plot.caption = element_text(color = "#777777", size = 8, hjust = 0, margin = margin(t = 8))
+    )
+  
+  print(map_gradient)
+  
+  ggsave(
+    filename = file.path(output_dir, "Zoning_Headroom_Gradient.png"), 
+    plot = map_gradient, 
+    width = 10, 
+    height = 8, 
+    dpi = 300, 
+    bg = "white"
   )
-
-# 3. Render the comprehensive county-wide addition map
-map_mixed_use_additions <- ggplot() +
-  geom_sf(data = lots_mixed_use_additions, aes(fill = Addition_Status), color = NA) +
-  geom_sf(data = city_outlines, fill = NA, color = "#4A4A4A", size = 0.5) +
-  geom_sf_text(data = city_labels, aes(label = City), 
-               color = "black", fontface = "bold", size = 3, alpha = 0.6, check_overlap = TRUE) +
   
-  scale_fill_manual(
-    values = c(
-      "Added via Commercial/Mixed-Use Expansion"  = "#FF0000",  # Bright Red
-      "Baseline Residential Stock"                = "#B19FF1",  # Soft Violet
-      "Non-Residential / Pure Industrial / Parks" = "#CCCCFF"  # Pale Periwinkle
-    ),
-    name = "Inventory Status"
-  ) +
+  # -------------------------------------------------------------------------
+  # --- GRAPHIC 3: Residential Footprint Matrix ---
+  # -------------------------------------------------------------------------
+  cat("Compiling Graphic 3: Policy Footprint Matrix...\n")
   
-  labs(
-    title = "County-Wide Housing Inventory Expansion: Commercial & Mixed-Use Frameworks",
-    subtitle = "Isolating parcels unlocked by expanding regional housing filters to capture multi-family allowances in commercial hubs",
-    caption = "Bright red clusters highlight commercial, downtown, and town center village zones county-wide that legally permit vertical multi-family housing."
-  ) +
+  map_residential <- ggplot() +
+    geom_sf(
+      data = zoning_matrix_data, 
+      aes(fill = Is_Residential), 
+      color = NA
+    ) +
+    geom_sf(
+      data = city_outlines, 
+      fill = NA, 
+      color = "#4A4A4A", 
+      size = 0.5
+    ) +
+    geom_sf_text(
+      data = city_labels_shifted, 
+      aes(label = City), 
+      color = "#222222", 
+      family = SIGHTLINE_FONT, 
+      fontface = "bold", 
+      size = 3, 
+      alpha = 0.8, 
+      check_overlap = TRUE
+    ) +
+    scale_fill_manual(
+      values = c(
+        "Residential / Mixed-Use Zoning"       = "#B19FF1", 
+        "Pure Commercial / Industrial / Parks" = "#CCCCFF"
+      ), 
+      name = "Regulatory Framework"
+    ) +
+    labs(
+      title = "Residential vs Non-Residential Zoning Footprint Matrix", 
+      subtitle = "Consolidated county-wide view of regulatory land allowances and structural prohibitions for housing",
+      caption = "Source: Clark County Spatial Planning Layer Framework Database."
+    ) +
+    theme_minimal(base_family = SIGHTLINE_FONT) + 
+    theme(
+      panel.grid = element_blank(), 
+      axis.text = element_blank(), 
+      axis.title = element_blank(), 
+      legend.position = "bottom",
+      plot.title.position = "panel",
+      plot.title = element_text(face = "bold", size = 14, color = "#111111", margin = margin(b = 4)),
+      plot.subtitle = element_text(color = "#555555", size = 10, margin = margin(b = 12)),
+      plot.caption = element_text(color = "#777777", size = 8, hjust = 0, margin = margin(t = 8))
+    )
   
-  theme_minimal() + 
-  theme(
-    panel.grid = element_blank(), 
-    axis.text = element_blank(), 
-    axis.title.x = element_blank(), 
-    axis.title.y = element_blank(), 
-    legend.position = "bottom",
-    
-    # Align text relative to the plot panel bounds to match centered legend tracking
-    plot.title.position = "panel",
-    plot.caption.position = "panel",
-    
-    # Precise margin alignment parameters to anchor headers squarely above the legend container text
-    plot.title = element_text(face = "bold", size = 14, hjust = 0, margin = margin(t = 10, r = 0, b = 2, l = 85)),
-    plot.subtitle = element_text(color = "#4A4A4A", size = 10, hjust = 0, margin = margin(t = 0, r = 0, b = 10, l = 85)),
-    plot.caption = element_text(color = "#4A4A4A", size = 8, hjust = 0, margin = margin(t = 10, r = 0, b = 10, l = 85))
+  print(map_residential)
+  
+  ggsave(
+    filename = file.path(output_dir, "Zoning_Residential_Footprint_Matrix.png"), 
+    plot = map_residential, 
+    width = 10, 
+    height = 8, 
+    dpi = 300, 
+    bg = "white"
   )
-
-# Print to your active RStudio Plot Viewer Pane for immediate proofing
-print(map_mixed_use_additions)
-
-# Save the graphic file to your local documents directory
-ggsave(
-  filename = file.path(output_dir, "Zoning_MixedUse_Housing_Additions.png"), 
-  plot = map_mixed_use_additions, 
-  width = 10, 
-  height = 8, 
-  dpi = 300, 
-  bg = "white"
-)
+  
+  # -------------------------------------------------------------------------
+  # --- GRAPHIC 4: Vancouver Urban Core Mixed-Use Expansion Zoom Map ---
+  # -------------------------------------------------------------------------
+  cat("Compiling Graphic 4: Focused Urban Core Expansion Zoom...\n")
+  
+  map_vancouver_zoom <- ggplot() +
+    geom_sf(
+      data = lots_mixed_use_zoom, 
+      aes(fill = Addition_Status), 
+      color = NA
+    ) +
+    geom_sf(
+      data = city_outlines, 
+      fill = NA, 
+      color = "#4A4A4A", 
+      size = 0.5
+    ) +
+    geom_sf_text(
+      data = city_labels_shifted, 
+      aes(label = City), 
+      color = "#222222", 
+      family = SIGHTLINE_FONT, 
+      fontface = "bold", 
+      size = 3, 
+      alpha = 0.8, 
+      check_overlap = TRUE
+    ) +
+    scale_fill_manual(
+      values = c(
+        "Added via Commercial/Mixed-Use Expansion"  = "#FF0000", 
+        "Baseline Residential Stock"                = "#B19FF1", 
+        "Non-Residential / Pure Industrial / Parks" = "#CCCCFF"
+      ), 
+      name = "Inventory Status"
+    ) +
+    coord_sf(
+      xlim = c(1060000, 1115000), 
+      ylim = c(70000, 145000), 
+      expand = FALSE
+    ) +
+    labs(
+      title = "Vancouver Urban Core Housing Inventory Expansion Focus", 
+      subtitle = "Zoomed perspective isolating multi-family allowances recovered within commercial and downtown hubs",
+      caption = "Bright red clusters highlight parcels that legally permit vertical multi-family housing options."
+    ) +
+    theme_minimal(base_family = SIGHTLINE_FONT) + 
+    theme(
+      panel.grid = element_blank(), 
+      axis.text = element_blank(), 
+      axis.title = element_blank(), 
+      legend.position = "bottom",
+      plot.title.position = "panel",
+      plot.caption.position = "panel",
+      plot.title = element_text(face = "bold", size = 14, hjust = 0, margin = margin(t = 10, r = 0, b = 2, l = 85)),
+      plot.subtitle = element_text(color = "#555555", size = 10, hjust = 0, margin = margin(t = 0, r = 0, b = 10, l = 85)),
+      plot.caption = element_text(color = "#777777", size = 8, hjust = 0, margin = margin(t = 10, r = 0, b = 10, l = 85)))
+  
+  print(map_vancouver_zoom)
+  ggsave(filename = file.path(output_dir, "Zoning_MixedUse_Vancouver_Zoom.png"),
+         plot = map_vancouver_zoom,width = 10,height = 8,dpi = 300,bg = "white")
+  
+  # -------------------------------------------------------------------------
+  # --- GRAPHIC 5: County-Wide Commercial & Mixed-Use Housing Stock Expansion ---
+  # -------------------------------------------------------------------------
+  cat("Compiling Graphic 5: County-Wide Inventory Expansion Frameworks...\n")
+  
+  map_mixed_use_additions <- ggplot() +
+    # Draw all parcels filled by inventory addition status (color = NA removes line grid noise)
+    geom_sf(
+      data = lots_mixed_use_additions, 
+      aes(fill = Addition_Status), 
+      color = NA
+    ) +
+    
+    # Overlay thin dark grey borders marking official urban growth boundaries
+    geom_sf(
+      data = city_outlines, 
+      fill = NA, 
+      color = "#4A4A4A", 
+      size = 0.5
+    ) +
+    
+    # Add semi-transparent labels positioned safely above city borders
+    geom_sf_text(
+      data = city_labels_shifted, 
+      aes(label = City), 
+      color = "#222222", 
+      family = SIGHTLINE_FONT, 
+      fontface = "bold", 
+      size = 3, 
+      alpha = 0.6, 
+      check_overlap = TRUE
+    ) +
+    
+    # Assign clear categorical tones highlighting exactly where stock was added
+    scale_fill_manual(
+      values = c(
+        "Added via Commercial/Mixed-Use Expansion"  = "#FF0000",  # Bright Red
+        "Baseline Residential Stock"                = "#B19FF1",  # Soft Violet
+        "Non-Residential / Pure Industrial / Parks" = "#CCCCFF"   # Pale Periwinkle
+      ), 
+      name = "Inventory Status"
+    ) +
+    
+    labs(
+      title = "County-Wide Housing Inventory Expansion: Commercial & Mixed-Use Frameworks", 
+      subtitle = "Isolating parcels unlocked by expanding regional housing filters to capture multi-family allowances in commercial hubs",
+      caption = "Bright red clusters highlight commercial, downtown, and town center village zones county-wide that legally permit vertical multi-family housing."
+    ) +
+    
+    # Apply clean Sightline styling stripping out background gridlines and coordinate grids
+    theme_minimal(base_family = SIGHTLINE_FONT) + 
+    theme(
+      panel.grid = element_blank(), 
+      axis.text = element_blank(), 
+      axis.title = element_blank(), 
+      legend.position = "bottom",
+      plot.title.position = "panel", 
+      plot.caption.position = "panel",
+      
+      # Manual point offsets locking text cleanly above and below the bottom legend container layout
+      plot.title = element_text(face = "bold", size = 14, hjust = 0, margin = margin(t = 10, r = 0, b = 2, l = 85)),
+      plot.subtitle = element_text(color = "#555555", size = 10, hjust = 0, margin = margin(t = 0, r = 0, b = 10, l = 85)),
+      plot.caption = element_text(color = "#777777", size = 8, hjust = 0, margin = margin(t = 10, r = 0, b = 10, l = 85))
+    )
+  
+  # Display the map layer directly inside your RStudio active preview window panel
+  print(map_mixed_use_additions)
+  
+  # Save a high-resolution production image file to your documents path
+  ggsave(
+    filename = file.path(output_dir, "Zoning_MixedUse_Housing_Additions.png"), 
+    plot = map_mixed_use_additions, 
+    width = 10, 
+    height = 8, 
+    dpi = 300, 
+    bg = "white"
+  )
+}
 
 # =========================================================================
-# 9. INTEGRATED ANALYSIS REPORT MATRIX (Capacity vs Lost Potential - Fixed)
+# 9. INTEGRATED ANALYSIS REPORT MATRIX (Capacity vs Constraint Reductions)
 # =========================================================================
 city_intersections <- st_intersection(lots_capacity_model, city_outlines)
 city_intersections$city_intersect_area <- st_area(city_intersections)
@@ -586,29 +725,32 @@ lots_with_city <- city_intersections %>%
   slice(1) %>% 
   ungroup()
 
-# MATCHED CRITICAL FIX: Direct variable mapping alignment to resolve the select() crash
-hazard_lookup <- lots_capacity_model %>%
+# Direct variable lookup link isolating exact acreage metrics from the cache file
+constraint_lookup <- lots_capacity_model %>%
   st_drop_geometry() %>%
   select(prop_id, Wetland_Acres, Critical_Slope_Acres, Intersects_Cemetery)
 
 lots_with_city_fixed <- lots_with_city %>%
-  left_join(hazard_lookup, by = "prop_id")
+  left_join(constraint_lookup, by = "prop_id")
 
 city_housing_report_matrix <- lots_with_city_fixed %>%
   st_drop_geometry() %>%
   mutate(
-    Gross_Zoned_Capacity  = floor(Lot_Acres * UnitsPerAc),
-    Units_Lost_To_Hazards = pmax(0, Gross_Zoned_Capacity - MaxPossibleConstruction)
+    Gross_Zoned_Capacity       = floor(Lot_Acres * UnitsPerAc),
+    Units_Lost_To_Constraints  = pmax(0, Gross_Zoned_Capacity - MaxPossibleConstruction)
   ) %>%
   group_by(City) %>%
   summarise(
-    Total_Viable_New_Housing_Units          = sum(Net_Realizable_Homes, na.rm = TRUE),
-    Total_Housing_Potential_Lost_To_Hazards = sum(Units_Lost_To_Hazards, na.rm = TRUE)
+    Total_Viable_New_Housing_Units              = sum(Net_Realizable_Homes, na.rm = TRUE),
+    Total_Housing_Potential_Lost_To_Constraints = sum(Units_Lost_To_Constraints, na.rm = TRUE)
   ) %>%
   arrange(desc(Total_Viable_New_Housing_Units))
 
 print(city_housing_report_matrix)
-write.csv(city_housing_report_matrix, file = file.path(output_dir, "City_UGB_Unified_Housing_Capacity_Report.csv"), row.names = FALSE)
+write.csv(city_housing_report_matrix,
+          file = file.path(output_dir,
+                           "City_UGB_Unified_Housing_Capacity_Report.csv"),
+          row.names = FALSE)
 
 
 # =========================================================================
@@ -634,4 +776,3 @@ city_hazard_breakdown_matrix <- lots_with_city_fixed %>%
 
 print(city_hazard_breakdown_matrix)
 write.csv(city_hazard_breakdown_matrix, file = file.path(output_dir, "City_UGB_Housing_Loss_Constraint_Attribution.csv"), row.names = FALSE)
-

@@ -1,0 +1,89 @@
+"grpdesc,C,60"
+Unknown
+Agriculture-20 (AG-20)
+Agriculture/Wildlife (AG/WL)
+Airport (A)
+"Business park (BP, OFF)"
+"Neighborhood commercial (NC, C1, CN, CNB)"
+"Community commercial (CC, C2, CCB)"
+Forest tier I-80 (FR-80)
+Forest tier II-40 (FR-40)
+"Heavy industrial (IH, MH, HI)"
+Highway commercial (CH)
+University (U)
+"Light industrial (IL, ML, LI, IND, LI/EC, WE)"
+Mixed use (MX)
+Office residential-18 (OR-18)
+Office residential-22 (OR-22)
+Office residential-30 (OR-30)
+Office residential-43 (OR-43)
+Parks/Open Space (P/OS)
+Parks/Wildlife refuge (P/WL)
+"Residential (R-12, R12)"
+"Residential (R16, AR-16, MDR-16)"
+"Residential (R-18, MF-18)"
+"Residential (R-22, AR-22)"
+Residential (R-30)
+Residential (R-43)
+"Single-Family residential (R1-10, R-10, R10)"
+"Single-Family residential (R1-20, R-20)"
+Single-Family residential  (R1-5)
+"Single-Family residential (R1-6, R-6, LDR-6)"
+"Single-Family residential (R1-7.5, R-7.5, LDR-7.5)"
+Rural comm.-inside rur.centers (CR-2)
+Rural-5 (R-5)
+"Public facilities (PF, IP, UP)"
+Water
+Rural-20 (R-20)
+Rural-10 (R-10)
+Single-Family residential - 12 (R-12)
+"Residential-10 (R10, MF-10)"
+Residential/Professional (RP)
+"General commercial (GC, CG)"
+Light industrial/Business park (LI/BP)
+Greenway/open space (GW)
+Rural comm.-outside rur.center (CR-1)
+"Single-Family residential (R1-15, R-15)"
+Gorge SMA agriculture (GSAG)
+Gorge SMA non-federal forest (GSNFF)
+Gorge SMA federal forest (GSFF)
+Gorge public recreation (GPR)
+Gorge SMA open space (GSOS)
+Gorge large-scale ag 80 (GLSA 80)
+Gorge large-scale ag 40 (GLSA 40)
+Gorge small-scale agriculture (GSSA)
+Gorge small woodland 40 (GSW 40)
+Gorge small woodland 20 (GSW 20)
+Gorge residential 5 (GR 5)
+Gorge residential 10 (GR 10)
+Rural center residential 2.5 ac min (RC-2.5)
+Rural center residential 1 ac min (RC-1)
+Office residential-15 (OR-15)
+Airpark - airport/residential (A)
+"Downtown commercial (D, DC,C-1)"
+"Regional commercial (RC, CRB)"
+Residential 3 units/acre (R3)
+Residential 5 units/acre (R5)
+Residential 7 units/acre (R7)
+Residential 20 units/acre (R20)
+"Waterfront mixed use (WX,WMU,WLS)"
+Town center core (TC-C)
+Town center east village (TC-EV)
+Town center west village (TC-WV)
+Railroad industrial (IR)
+Convenience commercial (CV)
+Single-family residential (R1-12.5)
+"Low density residential-4du/ac (R-4, RLD-4)"
+"Low density residential-6du/ac (R-6, RLD-6)"
+Residential low density - 8 (RLD-8)
+"Downtown mixed use (DMU, CMU)"
+Park
+Open space (OS)
+Employment (E)
+"Single-Family residential (R1-7.5, R-7.5, LDR-7.5, LD-NS)"
+"Residential (R-18, MF-18, HD-NS)"
+"Community commercial (CC, C2, CCB, C-NS)"
+"Mixed use (MX, MX-NS)"
+Mixed Employment (ME-NS)
+"Parks/Open Space (P/OS, POS-NS)"
+High density residential-35du/ac (R-35)
