@@ -8,6 +8,7 @@ A reproducible spatial data science pipeline built in R to evaluate **Zoning-Con
 
 The pipeline processes property data through a multi-tiered **Spatial, Volumetric, and Jurisdictional Reduction Model**:
 
+<pre>
 [ Total Parcel Surface Area ]
               │
               ▼
@@ -34,7 +35,7 @@ The pipeline processes property data through a multi-tiered **Spatial, Volumetri
               │
               ▼
 [ Net New Homes Allowed by Current Law ]
-
+</pre>
 
 ---
 
