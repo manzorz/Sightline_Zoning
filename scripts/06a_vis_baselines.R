@@ -3,7 +3,14 @@
 # =========================================================================
 
 if (!exists("GENERATE_GRAPHICS")) GENERATE_GRAPHICS <- TRUE
-if (!exists("OUTPUT_DIR")) OUTPUT_DIR <- "C:/Users/gmann/Documents/ClarkCountyZoning/output_products"
+if (!exists("OUTPUT_DIR")) {
+  user_root <- ifelse(Sys.info()[["sysname"]] == "Windows", chartr("\\", "/", Sys.getenv("USERPROFILE")), Sys.getenv("HOME"))
+  if (Sys.info()[["sysname"]] == "Windows") {
+    OUTPUT_DIR <- file.path(user_root, "Documents", "ClarkCountyZoning", "output_products")
+  } else {
+    OUTPUT_DIR <- file.path(user_root, "Documents", "ClarkCountyZoning", "output_products")
+  }
+}
 
 if (GENERATE_GRAPHICS) {
   cat("Executing Stage 6a: Rendering Sightline-style baseline policy maps...\n")
@@ -162,3 +169,10 @@ if (GENERATE_GRAPHICS) {
     plot = map_residential, width = 10, height = 8, dpi = 300, bg = "white"
   )
 }
+
+
+
+
+
+
+

@@ -4,7 +4,7 @@ library(ggplot2)
 # ------------------------------------------------------------------------------
 # 1. Load & Convert to data.table
 # ------------------------------------------------------------------------------
-acs <- fread("C:/Users/gmann/Downloads/usa_00011.csv/usa_00011.csv")
+acs <- fread("~/Downloads/usa_00011.csv/usa_00011.csv")
 
 # ------------------------------------------------------------------------------
 # 2. Filter & Clean Data
@@ -78,4 +78,11 @@ ggplot(acs_summary, aes(x = YEAR, y = total_households, color = units_category, 
     panel.grid.minor = element_blank(),
     panel.grid.major = element_line(color = "grey88")
   )
+
+
+
+
+
+
+
 

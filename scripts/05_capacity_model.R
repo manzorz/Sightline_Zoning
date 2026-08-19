@@ -1,10 +1,17 @@
 # =========================================================================
 # SCRIPT 05: DYNAMIC BUILDING ENVELOPE VOLUMETRIC CAPACITY ENGINE
 # =========================================================================
-cat("Executing Stage 5: Computing zoning-specific story limits, unit sizes, and net additions...\n")
+cat("Executing Stage 5: Computing zoning-specific story limits and unit sizes...\n")
 
-# Assert variable directory pathways passed down from the master controller
-if (!exists("OUTPUT_DIR")) OUTPUT_DIR <- "C:/Users/gmann/Documents/ClarkCountyZoning/output_products"
+# Assert data directory paths directly from the master controller environment
+if (!exists("OUTPUT_DIR")) {
+  user_root <- ifelse(Sys.info()[["sysname"]] == "Windows", chartr("\\", "/", Sys.getenv("USERPROFILE")), Sys.getenv("HOME"))
+  if (Sys.info()[["sysname"]] == "Windows") {
+    OUTPUT_DIR <- file.path(user_root, "Documents", "ClarkCountyZoning", "output_products")
+  } else {
+    OUTPUT_DIR <- file.path(user_root, "Documents", "ClarkCountyZoning", "output_products")
+  }
+}
 
 final_cache_file  <- file.path(OUTPUT_DIR, "processed_lots_capacity.rds")
 
@@ -110,3 +117,10 @@ if (file.exists(final_cache_file)) {
 }
 
 cat("Stage 5 processing complete. Capacity headroom and economic layers securely indexed.\n")
+
+
+
+
+
+
+

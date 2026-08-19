@@ -145,3 +145,10 @@ if (dir.exists(CONFIG$paths$output_dir)) {
 }
 
 print(head(housing_forecast_summary))
+
+
+
+
+
+
+

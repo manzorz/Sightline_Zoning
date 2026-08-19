@@ -4,7 +4,14 @@
 cat("Executing Stage 3: Computing parcel-to-zone mappings and structural setbacks...\n")
 
 # Assert local workspace cache targets established in prior steps
-if (!exists("OUTPUT_DIR")) OUTPUT_DIR <- "C:/Users/gmann/Documents/ClarkCountyZoning/output_products"
+if (!exists("OUTPUT_DIR")) {
+  user_root <- ifelse(Sys.info()[["sysname"]] == "Windows", chartr("\\", "/", Sys.getenv("USERPROFILE")), Sys.getenv("HOME"))
+  if (Sys.info()[["sysname"]] == "Windows") {
+    OUTPUT_DIR <- file.path(user_root, "Documents", "ClarkCountyZoning", "output_products")
+  } else {
+    OUTPUT_DIR <- file.path(user_root, "Documents", "ClarkCountyZoning", "output_products")
+  }
+}
 if (!exists("TARGET_CRS")) TARGET_CRS <- 2927
 
 base_cache_file  <- file.path(OUTPUT_DIR, "base_spatial_inputs.rds")
@@ -50,7 +57,7 @@ if (file.exists(rules_cache_file)) {
   cat("Parsing zoning text strings to attach local Title 40 design criteria...\n")
   lots_with_rules <- lots_joined %>%
     mutate(
-      Zone_Code = sub(".*\\((.*)\\).*", "\\1", desc_),
+      Zone_Code = sub(".*/((.*)/).*", "/1", desc_),
       
       # Determine absolute maximum height restrictions
       Max_Height_Ft = case_when(
@@ -81,3 +88,10 @@ if (file.exists(rules_cache_file)) {
 }
 
 cat("Stage 3 completed successfully. Regulatory parameters locked to property frames.\n")
+
+
+
+
+
+
+

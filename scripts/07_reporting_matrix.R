@@ -5,7 +5,7 @@ cat("Executing Stage 7: Compiling final summary reports and policy loss matrices
 
 # Assert variable directory pathways passed down from the master controller
 if (!exists("OUTPUT_DIR")) {
-  OUTPUT_DIR <- "C:/Users/gmann/Documents/ClarkCountyZoning/output_products"
+  OUTPUT_DIR <- "~/Documents/ClarkCountyZoning/output_products"
 }
 
 # -------------------------------------------------------------------------
@@ -104,3 +104,10 @@ write.csv(
 )
 
 cat("Stage 7 processing complete. CSV analysis products successfully saved to disk.\n")
+
+
+
+
+
+
+

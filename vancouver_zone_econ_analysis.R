@@ -6,7 +6,7 @@ library(terra)
 library(exactextractr)
 
 # Define project-wide directories and coordinate parameters
-output_dir <- "C:\\Users\\gmann\\Documents\\ClarkCountyZoning"
+output_dir <- "C:/Users/gmann/Documents/ClarkCountyZoning"
 target_crs <- 2927 # NAD83 / Washington South (ftUS)
 
 if (!dir.exists(output_dir)) dir.create(output_dir, recursive = TRUE)
@@ -26,7 +26,7 @@ if (file.exists(clark_cache_file)) {
     pnw_tracts <- readRDS(pnw_cache_file)
   } else {
     cat("No caches found. Ingesting massive nationwide tract shapefile...\n")
-    raw_us_path <- paste0("C:/Users/gmann/Downloads/nhgis0015_shape/nhgis0015_shape/nhgis0015_shapefile_tl2024_us_tract_2024/",
+    raw_us_path <- paste0("~/Downloads/nhgis0015_shape/nhgis0015_shape/nhgis0015_shapefile_tl2024_us_tract_2024/",
                           "us_tract_2024/US_tract_2024.shp")
     us_tracts <- st_read(raw_us_path, quiet = TRUE)
     
@@ -62,9 +62,9 @@ if (file.exists(base_cache_file)) {
 } else {
   cat("No base spatial cache found. Initiating initial heavy disk data read layout...\n")
   
-  lots   <- st_read("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/TaxlotsPublic.shp") %>% st_transform(target_crs) %>% st_make_valid()
-  zoning <- st_read("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Zoning.shp") %>% st_transform(target_crs) %>% st_make_valid()
-  ugabnd <- st_read("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Ugabnd.shp") %>% st_transform(target_crs) %>% st_make_valid()
+  lots   <- st_read("~/Downloads/Clark_County_GIS_Atlas/TaxlotsPublic.shp") %>% st_transform(target_crs) %>% st_make_valid()
+  zoning <- st_read("~/Downloads/Clark_County_GIS_Atlas/Zoning.shp") %>% st_transform(target_crs) %>% st_make_valid()
+  ugabnd <- st_read("~/Downloads/Clark_County_GIS_Atlas/Ugabnd.shp") %>% st_transform(target_crs) %>% st_make_valid()
   
   zoning_cleaned <- zoning %>% 
     filter(!duplicated(st_geometry(.))) %>%
@@ -86,7 +86,7 @@ if (file.exists(base_cache_file)) {
   
   lots_with_rules <- lots_joined %>%
     mutate(
-      Zone_Code = sub(".*\\((.*)\\).*", "\\1", desc_),
+      Zone_Code = sub(".*/((.*)/).*", "/1", desc_),
       Max_Height_Ft = case_when(
         grepl("R1-|R-6|R-7.5|R-10|RLD", Zone_Code) ~ 35,
         grepl("R-12|R-18|R-22", Zone_Code)        ~ 35,
@@ -128,18 +128,18 @@ if (file.exists(final_cache_file)) {
     }
   }
   
-  slopes_df       <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Slopes.shp")
-  wet_vec_df      <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/WetInv.shp")
-  erosion_df      <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/ErosionHazard.shp")
-  habitat_df      <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Habitat.shp")
-  hyd_poly_df     <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/HydPoly.shp")
-  liq_df          <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Liquefaction.shp")
-  landslid_df     <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Lndslid.shp")
-  landslp_df      <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Lndslp.shp")
-  mines_df        <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Mines.shp")
-  tribal_df       <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/TribalLands.shp")
-  aquifer_df      <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/Aquifer.shp")
-  wui_proposed_df <- load_raw_shp("C:/Users/gmann/Downloads/Clark_County_GIS_Atlas/WildlandUrbanInterfaceProposed.shp")
+  slopes_df       <- load_raw_shp("~/Downloads/Clark_County_GIS_Atlas/Slopes.shp")
+  wet_vec_df      <- load_raw_shp("~/Downloads/Clark_County_GIS_Atlas/WetInv.shp")
+  erosion_df      <- load_raw_shp("~/Downloads/Clark_County_GIS_Atlas/ErosionHazard.shp")
+  habitat_df      <- load_raw_shp("~/Downloads/Clark_County_GIS_Atlas/Habitat.shp")
+  hyd_poly_df     <- load_raw_shp("~/Downloads/Clark_County_GIS_Atlas/HydPoly.shp")
+  liq_df          <- load_raw_shp("~/Downloads/Clark_County_GIS_Atlas/Liquefaction.shp")
+  landslid_df     <- load_raw_shp("~/Downloads/Clark_County_GIS_Atlas/Lndslid.shp")
+  landslp_df      <- load_raw_shp("~/Downloads/Clark_County_GIS_Atlas/Lndslp.shp")
+  mines_df        <- load_raw_shp("~/Downloads/Clark_County_GIS_Atlas/Mines.shp")
+  tribal_df       <- load_raw_shp("~/Downloads/Clark_County_GIS_Atlas/TribalLands.shp")
+  aquifer_df      <- load_raw_shp("~/Downloads/Clark_County_GIS_Atlas/Aquifer.shp")
+  wui_proposed_df <- load_raw_shp("~/Downloads/Clark_County_GIS_Atlas/WildlandUrbanInterfaceProposed.shp")
   
   # Segregate severe constraints into hard exclusion geometries
   hard_slope_mask  <- slopes_df %>% filter(grepl("40 - 100|greater than 100", desc_, ignore.case = TRUE)) %>% st_geometry() %>% st_union()
@@ -180,7 +180,7 @@ if (file.exists(final_cache_file)) {
   # STEP C: INGEST AND CLEAN THE TABULAR IPUMS NHGIS INDICATORS
   # -------------------------------------------------------------------------
   cat("Parsing IPUMS NHGIS data columns to compile neighborhood demographic matrices...\n")
-  nhgis_raw <- read.csv("C:/Users/gmann/Downloads/nhgis_csv/nhgis0015_ds273_20245_tract.csv", stringsAsFactors = FALSE)
+  nhgis_raw <- read.csv("~/Downloads/nhgis_csv/nhgis0015_ds273_20245_tract.csv", stringsAsFactors = FALSE)
   
   nhgis_indicators <- nhgis_raw %>%
     select(
@@ -776,3 +776,10 @@ city_hazard_breakdown_matrix <- lots_with_city_fixed %>%
 
 print(city_hazard_breakdown_matrix)
 write.csv(city_hazard_breakdown_matrix, file = file.path(output_dir, "City_UGB_Housing_Loss_Constraint_Attribution.csv"), row.names = FALSE)
+
+
+
+
+
+
+

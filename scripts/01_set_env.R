@@ -26,7 +26,14 @@ options(sf_max_print = 10, warn = -1)
 
 # Double-check global controller parameter routing variables passed down from main_controller.R
 if (!exists("TARGET_CRS")) TARGET_CRS <- 2927
-if (!exists("OUTPUT_DIR")) OUTPUT_DIR <- "C:/Users/gmann/Documents/ClarkCountyZoning/output_products"
+if (!exists("OUTPUT_DIR")) {
+  user_root <- ifelse(Sys.info()[["sysname"]] == "Windows", chartr("\\", "/", Sys.getenv("USERPROFILE")), Sys.getenv("HOME"))
+  if (Sys.info()[["sysname"]] == "Windows") {
+    OUTPUT_DIR <- file.path(user_root, "Documents", "ClarkCountyZoning", "output_products")
+  } else {
+    OUTPUT_DIR <- file.path(user_root, "Documents", "ClarkCountyZoning", "output_products")
+  }
+}
 
 # Define shared typography constant variables for unified Sightline styling outputs
 SIGHTLINE_FONT       <- "sans"
@@ -34,3 +41,10 @@ COLOR_UNINCORPORATED <- "#F2F2F2"
 COLOR_ZERO_CAPACITY  <- "#D3D3D3" 
 
 cat("Stage 1 environment successfully initialized. All spatial extensions loaded.\n")
+
+
+
+
+
+
+

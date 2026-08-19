@@ -1,48 +1,44 @@
 # =========================================================================
-# CLARK COUNTY HOUSING CAPACITY PIPELINE: MASTER CONTROLLER
+# CLARK COUNTY HOUSING CAPACITY PIPELINE: MASTER CONTROLLER (Data Path Fixed)
 # =========================================================================
-
-# Clear the workspace slate to free up system memory
 rm(list = ls())
 
-# Set global runtime execution parameter toggles
-GENERATE_GRAPHICS <- FALSE  # Sightline graphic module controller switch
-TARGET_CRS        <- 2927  # NAD83 / Washington South (ftUS)
+GENERATE_GRAPHICS <- TRUE  
+TARGET_CRS        <- 2927  
 
-# Define file pathway routing locations
-BASE_DIR   <- "C:/Users/gmann/Documents/ClarkCountyZoning"
+# Universal Forward-Slash User Profile Generation
+USER_PROFILE <- chartr("\\", "/", Sys.getenv("USERPROFILE"))
+
+BASE_DIR   <- file.path(USER_PROFILE, "Repos", "Sightline_Zoning")
 SCRIPT_DIR <- file.path(BASE_DIR, "scripts")
-DATA_DIR   <- "C:/Users/gmann/Downloads/Clark_County_GIS_Atlas"
-OUTPUT_DIR <- file.path(BASE_DIR, "output_products")
 
-# Ensure your local file paths exist physically on your disk drive
+# DATA PATH CORRECTION: Points directly to your true Downloads folder layout
+DATA_DIR   <- file.path(USER_PROFILE, "Downloads", "Clark_County_GIS_Atlas") 
+
+# Keeps your heavy .rds caches and report spreadsheets writing safely to Documents
+OUTPUT_DIR <- file.path(USER_PROFILE, "Documents", "ClarkCountyZoning", "output_products")
+
 if (!dir.exists(OUTPUT_DIR)) dir.create(OUTPUT_DIR, recursive = TRUE)
 
 # -------------------------------------------------------------------------
-# RUN PROCESSING SUB-MODULE MODULES IN SEQUENTIAL SEQUENCE
+# RUN PROCESSING MODULES SEQUENTIALLY (Connections fully secured)
 # -------------------------------------------------------------------------
 cat("Starting modular housing capacity execution pipeline...\n")
 
-# Stage 1: Load active R packages and assert baseline runtime requirements
 source(file.path(SCRIPT_DIR, "01_set_env.R"))
-
-# Stage 2: Heavy disk read operations and initial local cache snapshot check
 source(file.path(SCRIPT_DIR, "02_ingest_data.R"))
-
-# Stage 3: Resolve property overlapping metrics and attach text rules
 source(file.path(SCRIPT_DIR, "03_spatial_rules.R"))
-
-# Stage 4: Run vector mask overlaps to isolate footprint reductions
 source(file.path(SCRIPT_DIR, "04_environmental_engine.R"))
-
-# Stage 5: Execute 3D volumetric math, dynamic pricing, and database joins
 source(file.path(SCRIPT_DIR, "05_capacity_model.R"))
-
-# Stage 6: Render all categorical, gradient, and expansion maps
 source(file.path(SCRIPT_DIR, "06a_vis_baselines.R"))
 source(file.path(SCRIPT_DIR, "06b_vis_expansions.R"))
-
-# Stage 7: Compile and write report matrix tables directly to CSV outputs
 source(file.path(SCRIPT_DIR, "07_reporting_matrix.R"))
 
-cat("Pipeline run completed successfully. All outputs saved to disk.\n")
+cat("Pipeline run completed successfully. All products saved cleanly to disk.\n")
+
+
+
+
+
+
+
