@@ -1,5 +1,5 @@
 # =========================================================================
-# SCRIPT 04: CONSTRAINT GEOMETRY MASKS & RASTER-FIRST WETLANDS ENGINE
+# SCRIPT 04: CONSTRAINT GEOMETRY MASKS & SPATIALLY INDEXED ENGINES
 # =========================================================================
 cat("Executing Stage 4: Processing vector masks and extracting constraints...\n")
 
@@ -10,9 +10,11 @@ if (!exists("TARGET_CRS")) TARGET_CRS <- 2927
 rules_cache_file  <- file.path(OUTPUT_DIR, "rules_spatial_inputs.rds")
 final_cache_file  <- file.path(OUTPUT_DIR, "processed_lots_capacity.rds")
 
-# File paths for wetlands layers, pre-computed matrices, and checkpoints
-precalculated_vector_matrix   <- file.path(OUTPUT_DIR, "precalculated_vector_wetlands_matrix.rds") # Target output for Script 04b
-precalculated_raster_wetlands <- file.path(OUTPUT_DIR, "precalculated_raster_wetlands_mask.rds")
+# File paths matching 04a and 04b
+precalculated_vector_wetlands <- file.path(OUTPUT_DIR, "precalculated_vector_wetlands_mask.rds")
+precalculated_shoreline_mask  <- file.path(OUTPUT_DIR, "precalculated_shoreline_wetlands_mask.rds")
+precalculated_trans_mask      <- file.path(OUTPUT_DIR, "precalculated_transitional_wetlands_mask.rds")
+precalculated_vector_matrix   <- file.path(OUTPUT_DIR, "precalculated_vector_wetlands_matrix.rds")
 
 chk_wetland <- file.path(OUTPUT_DIR, "checkpoint_stage4_wetlands.rds")
 chk_slope   <- file.path(OUTPUT_DIR, "checkpoint_stage4_slopes.rds")
@@ -40,12 +42,12 @@ if (file.exists(final_cache_file)) {
     }
   }
   
-  # --- PROGRESS BAR TRACKED CALCULATOR ENGINE ---
+  # --- HIGH-SPEED EXACT GEOS CALCULATOR ENGINE (BBOX + LOCAL UNION) ---
   calc_overlap_acres_tracked <- function(parcels, constraint_mask, label_name = "Layer") {
     if (is.null(constraint_mask)) return(data.frame(prop_id = parcels$prop_id, acres = 0))
     
     total_parcels <- nrow(parcels)
-    chunk_size    <- 2000  
+    chunk_size    <- 5000  
     num_chunks    <- ceiling(total_parcels / chunk_size)
     
     output_list <- list()
@@ -56,19 +58,30 @@ if (file.exists(final_cache_file)) {
       end_idx   <- min(i * chunk_size, total_parcels)
       
       parcel_sub <- parcels[start_idx:end_idx, ]
-      intersects_logical <- st_intersects(parcel_sub, constraint_mask, sparse = FALSE)[, 1]
       
-      if (any(intersects_logical)) {
-        hit_parcels <- parcel_sub[intersects_logical, ]
-        overlap_df  <- st_intersection(hit_parcels, constraint_mask)
-        overlap_df$area_sqft <- as.numeric(st_area(overlap_df))
+      # Step 1: GEOS BBOX spatial filter to isolate local features in this chunk
+      chunk_bbox      <- st_as_sfc(st_bbox(parcel_sub))
+      sub_constraints <- st_filter(constraint_mask, chunk_bbox)
+      
+      if (nrow(sub_constraints) > 0) {
+        # Step 2: Dissolve ONLY this chunk's constraints (prevents double counting in milliseconds)
+        local_union <- st_union(sub_constraints)
         
-        summary_df <- overlap_df %>% 
-          st_drop_geometry() %>% 
-          group_by(prop_id) %>% 
-          summarise(acres = sum(area_sqft, na.rm = TRUE) / 43560, .groups = "drop")
+        # Step 3: Fast boolean hit check against the local union
+        hits <- st_intersects(parcel_sub, local_union, sparse = FALSE)[, 1]
         
-        output_list[[i]] <- summary_df
+        if (any(hits)) {
+          hit_parcels <- parcel_sub[hits, ]
+          overlap_df  <- st_intersection(hit_parcels, local_union)
+          overlap_df$area_sqft <- as.numeric(st_area(overlap_df))
+          
+          summary_df <- overlap_df %>% 
+            st_drop_geometry() %>% 
+            group_by(prop_id) %>% 
+            summarise(acres = sum(area_sqft, na.rm = TRUE) / 43560, .groups = "drop")
+          
+          output_list[[i]] <- summary_df
+        }
       }
       
       pct_complete <- (end_idx / total_parcels) * 100
@@ -94,60 +107,62 @@ if (file.exists(final_cache_file)) {
   }
   
   # -------------------------------------------------------------------------
-  # WETLANDS SELECTION LOGIC (PRE-COMPUTED VECTOR MATRIX -> RASTER DEFAULT)
+  # STEP 1: WETLANDS HIERARCHICAL FALLBACK LOGIC
   # -------------------------------------------------------------------------
   if (file.exists(chk_wetland)) {
     cat("  -> Wetland stage 4 checkpoint found. Restoring pre-computed calculations instantly...\n")
     lots_wetland_loss <- readRDS(chk_wetland)
     
   } else if (file.exists(precalculated_vector_matrix)) {
-    cat("  -> Discovered pre-calculated parcel-to-wetland vector matrix (produced via Script 04b).\n")
-    cat("  -> Restoring vector intersect matrix...\n")
+    cat("  -> Discovered pre-calculated parcel-to-wetland vector matrix (from Script 04b).\n")
+    cat("  -> Restoring full vector intersect matrix...\n")
     lots_wetland_loss <- readRDS(precalculated_vector_matrix)
     saveRDS(lots_wetland_loss, file = chk_wetland)
     
+  } else if (file.exists(precalculated_vector_wetlands)) {
+    cat("  -> Vector matrix missing. Defaulting to 04a raster mask...\n")
+    active_wetland_mask <- readRDS(precalculated_vector_wetlands)
+    
+    # If mask is sf spatial object, convert to indexed collection if needed
+    lots_wetland_loss <- calc_overlap_acres_tracked(
+      lots_with_rules, 
+      active_wetland_mask, 
+      "Raster-Derived Wetland Mask (04a)"
+    ) %>% rename(Wetland_Acres = acres)
+    
+    saveRDS(lots_wetland_loss, file = chk_wetland)
+    rm(active_wetland_mask)
+    invisible(gc())
+    
   } else {
-    cat("  -> Pre-calculated vector matrix not found. Defaulting to fast RASTER output processing...\n")
-    
-    if (file.exists(precalculated_raster_wetlands)) {
-      active_wetland_mask <- readRDS(precalculated_raster_wetlands)
-      lots_wetland_loss   <- calc_overlap_acres_tracked(
-        lots_with_rules, 
-        active_wetland_mask, 
-        "Raster Wetlands Overlay Framework"
-      ) %>% rename(Wetland_Acres = acres)
-      
-      rm(active_wetland_mask)
-      invisible(gc())
-    } else {
-      cat("  -> WARNING: Neither vector matrix nor raster wetlands file were found. Setting wetland acres to 0.\n")
-      lots_wetland_loss <- data.frame(prop_id = lots_with_rules$prop_id, Wetland_Acres = 0)
-    }
-    
+    cat("  -> WARNING: No wetland matrix or mask found! Defaulting wetland acres to 0.\n")
+    lots_wetland_loss <- data.frame(prop_id = lots_with_rules$prop_id, Wetland_Acres = 0)
     saveRDS(lots_wetland_loss, file = chk_wetland)
   }
   
   # -------------------------------------------------------------------------
-  # STEP 2: Critical Topography Slopes Layer Processing
+  # STEP 2: CRITICAL TOPOGRAPHY SLOPES LAYER PROCESSING (INDEXED)
   # -------------------------------------------------------------------------
   if (file.exists(chk_slope)) {
     cat("  -> Slope checkpoint found. Restoring pre-computed calculations instantly...\n")
     lots_slope_loss <- readRDS(chk_slope)
   } else {
     slopes_df <- load_raw_shp(file.path(DATA_DIR, "Slopes.shp"), DATA_DIR, "Slopes")
+    
+    # DO NOT st_union into a single polygon; keep individual features for indexing!
     hard_slope_mask <- slopes_df %>% 
       filter(grepl("40 - 100|greater than 100", desc_, ignore.case = TRUE)) %>% 
-      st_geometry() %>% 
-      st_union()
+      select(geometry)
     
     lots_slope_loss <- calc_overlap_acres_tracked(lots_with_rules, hard_slope_mask, "Slopes >= 40%") %>% 
       rename(Critical_Slope_Acres = acres)
+    
     saveRDS(lots_slope_loss, file = chk_slope)
     rm(slopes_df, hard_slope_mask); invisible(gc())
   }
   
   # -------------------------------------------------------------------------
-  # STEP 3: Combined Mask Total Exclusions Processing
+  # STEP 3: COMBINED MASK TOTAL EXCLUSIONS PROCESSING (INDEXED)
   # -------------------------------------------------------------------------
   if (file.exists(chk_total)) {
     cat("  -> Master exclusion checkpoint found. Restoring pre-computed calculations instantly...\n")
@@ -162,25 +177,27 @@ if (file.exists(final_cache_file)) {
     mines_df        <- load_raw_shp(file.path(DATA_DIR, "Mines.shp"), DATA_DIR, "Mines")
     tribal_df       <- load_raw_shp(file.path(DATA_DIR, "TribalLands.shp"), DATA_DIR, "TribalLands")
     
-    hard_slope_mask  <- if(!is.null(slopes_df)) slopes_df %>% filter(grepl("40 - 100|greater than 100", desc_, ignore.case = TRUE)) %>% st_geometry() %>% st_union() else NULL
-    habitat_mask     <- if(!is.null(habitat_df)) st_union(st_geometry(habitat_df)) else NULL
-    hyd_poly_mask    <- if(!is.null(hyd_poly_df)) st_union(st_geometry(hyd_poly_df)) else NULL
-    landslide_mask   <- if(!is.null(landslid_df)) st_union(st_geometry(landslid_df)) else NULL
-    landslp_mask     <- if(!is.null(landslp_df)) st_union(st_geometry(landslp_df)) else NULL
-    severe_landslide <- if(!is.null(landslide_mask) || !is.null(landslp_mask)) st_union(c(landslide_mask, landslp_mask)) else NULL
-    mines_mask       <- if(!is.null(mines_df)) st_union(st_geometry(mines_df)) else NULL
-    tribal_mask      <- if(!is.null(tribal_df)) st_union(st_geometry(tribal_df)) else NULL
+    hard_slope_mask  <- if(!is.null(slopes_df)) slopes_df %>% filter(grepl("40 - 100|greater than 100", desc_, ignore.case = TRUE)) %>% select(geometry) else NULL
+    habitat_mask     <- if(!is.null(habitat_df)) habitat_df %>% select(geometry) else NULL
+    hyd_poly_mask    <- if(!is.null(hyd_poly_df)) hyd_poly_df %>% select(geometry) else NULL
+    landslide_mask   <- if(!is.null(landslid_df)) landslid_df %>% select(geometry) else NULL
+    landslp_mask     <- if(!is.null(landslp_df)) landslp_df %>% select(geometry) else NULL
+    mines_mask       <- if(!is.null(mines_df)) mines_df %>% select(geometry) else NULL
+    tribal_mask      <- if(!is.null(tribal_df)) tribal_df %>% select(geometry) else NULL
     
-    hard_exclusion_list   <- list(hard_slope_mask, habitat_mask, hyd_poly_mask, severe_landslide, mines_mask, tribal_mask)
-    valid_exclusions      <- hard_exclusion_list[!sapply(hard_exclusion_list, is.null)]
-    master_exclusion_mask <- do.call(st_union, valid_exclusions)
+    hard_exclusion_list <- list(hard_slope_mask, habitat_mask, hyd_poly_mask, landslide_mask, landslp_mask, mines_mask, tribal_mask)
+    valid_exclusions    <- hard_exclusion_list[!sapply(hard_exclusion_list, is.null)]
+    
+    # Combine feature collections without whole-county st_union!
+    master_exclusion_mask <- bind_rows(valid_exclusions)
     
     lots_total_loss <- calc_overlap_acres_tracked(lots_with_rules, master_exclusion_mask, "Master Combined Exclusions") %>% 
       rename(Hard_Excluded_Acres = acres)
+    
     saveRDS(lots_total_loss, file = chk_total)
     
     rm(slopes_df, habitat_df, hyd_poly_df, landslid_df, landslp_df, mines_df, tribal_df)
-    rm(hard_slope_mask, habitat_mask, hyd_poly_mask, severe_landslide, mines_mask, tribal_mask, master_exclusion_mask)
+    rm(hard_exclusion_list, valid_exclusions, master_exclusion_mask)
     invisible(gc())
   }
   
