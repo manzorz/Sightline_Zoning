@@ -123,7 +123,6 @@ if (file.exists(final_cache_file)) {
     cat("  -> Vector matrix missing. Defaulting to 04a raster mask...\n")
     active_wetland_mask <- readRDS(precalculated_vector_wetlands)
     
-    # If mask is sf spatial object, convert to indexed collection if needed
     lots_wetland_loss <- calc_overlap_acres_tracked(
       lots_with_rules, 
       active_wetland_mask, 
@@ -149,7 +148,6 @@ if (file.exists(final_cache_file)) {
   } else {
     slopes_df <- load_raw_shp(file.path(DATA_DIR, "Slopes.shp"), DATA_DIR, "Slopes")
     
-    # DO NOT st_union into a single polygon; keep individual features for indexing!
     hard_slope_mask <- slopes_df %>% 
       filter(grepl("40 - 100|greater than 100", desc_, ignore.case = TRUE)) %>% 
       select(geometry)
@@ -162,33 +160,48 @@ if (file.exists(final_cache_file)) {
   }
   
   # -------------------------------------------------------------------------
-  # STEP 3: COMBINED MASK TOTAL EXCLUSIONS PROCESSING (INDEXED)
+  # STEP 3: COMBINED MASK TOTAL EXCLUSIONS PROCESSING (SAFELY LOAD WETLANDS)
   # -------------------------------------------------------------------------
   if (file.exists(chk_total)) {
     cat("  -> Master exclusion checkpoint found. Restoring pre-computed calculations instantly...\n")
     lots_total_loss <- readRDS(chk_total)
   } else {
-    cat("Compiling remaining mask components for spatial reduction (Wetlands managed separately)...\n")
-    slopes_df       <- load_raw_shp(file.path(DATA_DIR, "Slopes.shp"), DATA_DIR, "Slopes")
-    habitat_df      <- load_raw_shp(file.path(DATA_DIR, "Habitat.shp"), DATA_DIR, "Habitat")
-    hyd_poly_df     <- load_raw_shp(file.path(DATA_DIR, "HydPoly.shp"), DATA_DIR, "HydPoly")
-    landslid_df     <- load_raw_shp(file.path(DATA_DIR, "Lndslid.shp"), DATA_DIR, "Lndslid")
-    landslp_df      <- load_raw_shp(file.path(DATA_DIR, "Lndslp.shp"), DATA_DIR, "Lndslp")
-    mines_df        <- load_raw_shp(file.path(DATA_DIR, "Mines.shp"), DATA_DIR, "Mines")
-    tribal_df       <- load_raw_shp(file.path(DATA_DIR, "TribalLands.shp"), DATA_DIR, "TribalLands")
+    cat("Compiling master exclusion mask (including Wetlands, Slopes, Habitat, etc.)...\n")
     
-    hard_slope_mask  <- if(!is.null(slopes_df)) slopes_df %>% filter(grepl("40 - 100|greater than 100", desc_, ignore.case = TRUE)) %>% select(geometry) else NULL
-    habitat_mask     <- if(!is.null(habitat_df)) habitat_df %>% select(geometry) else NULL
-    hyd_poly_mask    <- if(!is.null(hyd_poly_df)) hyd_poly_df %>% select(geometry) else NULL
-    landslide_mask   <- if(!is.null(landslid_df)) landslid_df %>% select(geometry) else NULL
-    landslp_mask     <- if(!is.null(landslp_df)) landslp_df %>% select(geometry) else NULL
-    mines_mask       <- if(!is.null(mines_df)) mines_df %>% select(geometry) else NULL
-    tribal_mask      <- if(!is.null(tribal_df)) tribal_df %>% select(geometry) else NULL
+    # Safely load wetlands mask from file if available
+    wetland_mask_spatial <- if (file.exists(precalculated_vector_wetlands)) {
+      w_mask <- readRDS(precalculated_vector_wetlands)
+      if (inherits(w_mask, "sf")) w_mask %>% select(geometry) else st_sf(geometry = w_mask)
+    } else NULL
     
-    hard_exclusion_list <- list(hard_slope_mask, habitat_mask, hyd_poly_mask, landslide_mask, landslp_mask, mines_mask, tribal_mask)
-    valid_exclusions    <- hard_exclusion_list[!sapply(hard_exclusion_list, is.null)]
+    slopes_df   <- load_raw_shp(file.path(DATA_DIR, "Slopes.shp"), DATA_DIR, "Slopes")
+    habitat_df  <- load_raw_shp(file.path(DATA_DIR, "Habitat.shp"), DATA_DIR, "Habitat")
+    hyd_poly_df <- load_raw_shp(file.path(DATA_DIR, "HydPoly.shp"), DATA_DIR, "HydPoly")
+    landslid_df <- load_raw_shp(file.path(DATA_DIR, "Lndslid.shp"), DATA_DIR, "Lndslid")
+    landslp_df  <- load_raw_shp(file.path(DATA_DIR, "Lndslp.shp"), DATA_DIR, "Lndslp")
+    mines_df    <- load_raw_shp(file.path(DATA_DIR, "Mines.shp"), DATA_DIR, "Mines")
+    tribal_df   <- load_raw_shp(file.path(DATA_DIR, "TribalLands.shp"), DATA_DIR, "TribalLands")
     
-    # Combine feature collections without whole-county st_union!
+    hard_slope_mask <- if(!is.null(slopes_df)) slopes_df %>% filter(grepl("40 - 100|greater than 100", desc_, ignore.case = TRUE)) %>% select(geometry) else NULL
+    habitat_mask    <- if(!is.null(habitat_df)) habitat_df %>% select(geometry) else NULL
+    hyd_poly_mask   <- if(!is.null(hyd_poly_df)) hyd_poly_df %>% select(geometry) else NULL
+    landslide_mask  <- if(!is.null(landslid_df)) landslid_df %>% select(geometry) else NULL
+    landslp_mask    <- if(!is.null(landslp_df)) landslp_df %>% select(geometry) else NULL
+    mines_mask      <- if(!is.null(mines_df)) mines_df %>% select(geometry) else NULL
+    tribal_mask     <- if(!is.null(tribal_df)) tribal_df %>% select(geometry) else NULL
+    
+    hard_exclusion_list <- list(
+      wetland_mask_spatial,
+      hard_slope_mask, 
+      habitat_mask, 
+      hyd_poly_mask, 
+      landslide_mask, 
+      landslp_mask, 
+      mines_mask, 
+      tribal_mask
+    )
+    valid_exclusions <- hard_exclusion_list[!sapply(hard_exclusion_list, is.null)]
+    
     master_exclusion_mask <- bind_rows(valid_exclusions)
     
     lots_total_loss <- calc_overlap_acres_tracked(lots_with_rules, master_exclusion_mask, "Master Combined Exclusions") %>% 
@@ -197,7 +210,7 @@ if (file.exists(final_cache_file)) {
     saveRDS(lots_total_loss, file = chk_total)
     
     rm(slopes_df, habitat_df, hyd_poly_df, landslid_df, landslp_df, mines_df, tribal_df)
-    rm(hard_exclusion_list, valid_exclusions, master_exclusion_mask)
+    rm(wetland_mask_spatial, hard_exclusion_list, valid_exclusions, master_exclusion_mask)
     invisible(gc())
   }
   
