@@ -57,13 +57,13 @@ if (file.exists(rules_cache_file)) {
   cat("Parsing zoning text strings to attach local Title 40 design criteria...\n")
   lots_with_rules <- lots_joined %>%
     mutate(
-      Zone_Code = sub(".*/((.*)/).*", "/1", desc_),
+      Zone_Code = sub(".*/((.*)/).*", "\\1", desc_),
       
       # Determine absolute maximum height restrictions
       Max_Height_Ft = case_when(
         grepl("R1-|R-6|R-7.5|R-10|RLD", Zone_Code) ~ 35,
         grepl("R-12|R-18|R-22", Zone_Code)        ~ 35,
-        grepl("R-30|R-43", Zone_Code)             ~ 45,
+        grepl("R-30|R-43", Zone_Code)              ~ 45,
         grepl("OR-15|OR-18|OR-22", Zone_Code)     ~ 45,
         grepl("OR-30|OR-43", Zone_Code)           ~ 60,
         grepl("IH|IL|ML|IR", Zone_Code)           ~ 100, 
@@ -87,11 +87,10 @@ if (file.exists(rules_cache_file)) {
   )
 }
 
+# -------------------------------------------------------------------------
+# BRIDGE TO STAGE 4: ALIAS & EXPORT FOR VECTOR HAZARD ENGINE
+# -------------------------------------------------------------------------
+lots_base <- lots_with_rules
+saveRDS(lots_base, file.path(OUTPUT_DIR, "processed_lots_base.rds"))
+
 cat("Stage 3 completed successfully. Regulatory parameters locked to property frames.\n")
-
-
-
-
-
-
-
