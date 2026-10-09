@@ -160,8 +160,13 @@ transit_dt <- as.data.table(st_drop_geometry(transit_sf))
 freq_indices <- transit_dt[level1 == "1" | level2 == "1", which = TRUE]
 freq_transit_sf <- transit_sf[freq_indices, ]
 
+# No longer use level 2 -- only level 1 (15-min daytime frequency) -- for qtr (TOD)
+freq_indices_tod <- transit_dt[level1 == "1", which = TRUE]
+freq_trans_tod_sf <- transit_sf[freq_indices_tod, ]
+
 # Create unified 0.25-mile and 0.50-mile spatial buffer rings
-buffer_qtr_sf  <- st_union(st_buffer(freq_transit_sf, dist = quarter_mile_ft))
+buffer_qtr_sf  <- st_union(st_buffer(freq_trans_tod_sf,
+                                     dist = quarter_mile_ft))
 buffer_half_sf <- st_union(st_buffer(freq_transit_sf, dist = half_mile_ft))
 
 # Intersect parcel centroids or geometries against buffers

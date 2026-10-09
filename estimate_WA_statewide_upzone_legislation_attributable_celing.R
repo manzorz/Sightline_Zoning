@@ -196,6 +196,27 @@ stories_map <- ggplot(final_transit_sf) +
 ggsave(vector_pdf_path, plot = stories_map, width = 11, height = 8.5, device = cairo_pdf)
 message(sprintf("Vector PDF successfully written to: %s", vector_pdf_path))
 
+# Convert sf to data.table temporarily for ultra-fast filtering
+transit_dt <- as.data.table(final_transit_sf)
+
+# Filter for non-zero net impact (assuming net capacity column is named 'net_capacity_units')
+# Adjust column name if yours is 'net_capacity', 'tod_unit_gain', etc.
+nonzero_dt <- transit_dt[net_tod_add > 0]
+
+# Convert back to sf object
+nonzero_transit_sf <- st_as_sf(nonzero_dt)
+
+# Transform projection to WA State Plane South (US Feet) to avoid QGIS CRS shift warnings
+nonzero_transit_projected <- st_transform(nonzero_transit_sf, crs = 2927)
+
+# Write trimmed dataset to GeoPackage (.gpkg)
+st_write(
+  obj = nonzero_transit_projected,
+  dsn = "transit_nonzero_impact.gpkg",
+  layer = "tod_active_parcels",
+  delete_layer = TRUE
+)
+
 # ------------------------------------------------------------------------------
 # 7. Comprehensive Policy Tabulation
 # ------------------------------------------------------------------------------
@@ -275,7 +296,7 @@ message("==========================================================")
 # 7. Consolidated Tabulations & CSV Export
 # ------------------------------------------------------------------------------
 dt_summary <- as.data.table(st_drop_geometry(final_transit_sf))
-csv_output_path <- "C:/Users/gmann/Downloads/WA_GIS/Statewide_Capacity_Tabulations_Level_2.csv"
+csv_output_path <- "C:/Users/gmann/Downloads/WA_GIS/Statewide_Capacity_Tabulations_Level_1.csv"
 
 # A. Statewide Overall
 statewide_tab <- dt_summary[, .(
