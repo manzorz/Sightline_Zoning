@@ -38,8 +38,13 @@ if (length(id_col) > 0) {
 if (!"lu_code" %in% names(dt) && "LANDUSE_CD" %in% names(dt)) {
   dt[, lu_code := as.integer(as.character(LANDUSE_CD))]
 }
-res_sf_codes   <- c(11, 14, 18, 19)
-comm_tod_codes <- c(50:69)
+
+# Strict Buildable Residential & Mixed-Use Commercial Land Use Vectors
+# Excludes 65 (Hospitals), 67 (Government), 68 (Educational Services/UW), 69 (Assembly/Churches)
+res_sf_codes          <- c(11, 12, 13, 14, 18, 19)
+comm_tod_codes        <- c(53, 54, 59)
+vacant_codes          <- c(91)
+strict_buildable_set  <- c(res_sf_codes, comm_tod_codes, vacant_codes)
 
 if (!"parcel_sqft" %in% names(dt)) {
   dt[, parcel_sqft := as.numeric(st_area(final_transit_sf)) * sqm_to_sqft]
@@ -94,7 +99,7 @@ dt[, tod_target_far := fifelse(station_dist_miles <= 0.25, 4.0,
                                fifelse(station_dist_miles <= 0.50, 2.5, 0.0))]
 dt[is.na(tod_target_far), tod_target_far := 0.0]
 
-# Policy Caps
+# Policy Caps (Restricted strictly to buildable land use codes)
 dt[, cap_hb1337 := total_baseline_units]
 dt[lu_code %in% res_sf_codes & is_built_up == FALSE, cap_hb1337 := pmax(total_baseline_units, 3L)]
 
@@ -104,10 +109,10 @@ if ("hb1110_max_units" %in% names(dt)) {
      cap_hb1110 := pmax(total_baseline_units, as.integer(hb1110_max_units))]
 }
 
-# TOD FAR Calculations (Excludes Built-Up High-Hanging Fruit)
+# TOD FAR Calculations (Excludes Built-Up High-Hanging Fruit and Non-Buildable Institutional Land)
 dt[, far_delta := pmax(0.0, tod_target_far - current_far, na.rm = TRUE)]
 dt[, tod_gross_sqft := 0.0]
-dt[lu_code %in% c(res_sf_codes, comm_tod_codes) & 
+dt[lu_code %in% strict_buildable_set & 
      is_built_up == FALSE & 
      tod_target_far > 0 & 
      eff_parcel_sqft >= 3000 & 
@@ -126,16 +131,24 @@ dt[, net_1110_add     := pmax(0L, cap_hb1110 - stack_after_tod)]
 
 dt[, max_policy_net_add := fifelse(is_built_up == TRUE, 0L, net_1337_add + net_tod_add + net_1110_add)]
 
+# Zero out net additions for non-buildable/institutional land use codes explicitly
+dt[!(lu_code %in% strict_buildable_set), `:=`(
+  net_1337_add       = 0L,
+  net_tod_add        = 0L,
+  net_1110_add       = 0L,
+  max_policy_net_add = 0L
+)]
+
 # ------------------------------------------------------------------------------
 # 5. Story Bins Categorization
 # ------------------------------------------------------------------------------
 dt[, story_bin := fcase(
   max_policy_net_add == 0 & is_built_up == TRUE,  "Built-Up (High-Hanging)",
   max_policy_net_add == 0 & is_built_up == FALSE, "0 Stories (No Net Add)",
-  max_policy_net_add <= 2,  "2 Stories",
-  max_policy_net_add <= 6,  "3-4 Stories",
-  max_policy_net_add <= 15, "5-6 Stories",
-  max_policy_net_add <= 40, "6-9 Stories",
+  max_policy_net_add <= 2,   "2 Stories",
+  max_policy_net_add <= 6,   "3-4 Stories",
+  max_policy_net_add <= 15,  "5-6 Stories",
+  max_policy_net_add <= 40,  "6-9 Stories",
   max_policy_net_add <= 100, "10-15 Stories",
   max_policy_net_add >  100, "20+ Stories"
 )]
@@ -199,8 +212,7 @@ message(sprintf("Vector PDF successfully written to: %s", vector_pdf_path))
 # Convert sf to data.table temporarily for ultra-fast filtering
 transit_dt <- as.data.table(final_transit_sf)
 
-# Filter for non-zero net impact (assuming net capacity column is named 'net_capacity_units')
-# Adjust column name if yours is 'net_capacity', 'tod_unit_gain', etc.
+# Filter for non-zero net impact
 nonzero_dt <- transit_dt[net_tod_add > 0]
 
 # Convert back to sf object
@@ -232,7 +244,7 @@ policy_summary <- dt_summary[, .(
 )]
 
 message("\n==========================================================")
-message("         STATEWIDE LEGISLATIVE CAPACITY TABULATION        ")
+message("         STATEWIDE LEGISLATIVE CAPACITY TABULATION         ")
 message("==========================================================")
 print(policy_summary)
 message("==========================================================")
@@ -272,9 +284,10 @@ dt_tod <- as.data.table(st_drop_geometry(final_transit_sf))
 tod_025_dt <- dt_tod[station_dist_miles <= 0.25]
 
 # Calculate metrics
+est_units_col <- head(intersect(c("est_units", "total_baseline_units"), names(dt_tod)), 1)
 tod_metrics <- tod_025_dt[, .(
   total_tod_parcels       = .N,
-  avg_existing_units      = round(mean(est_units, na.rm = TRUE), 2),
+  avg_existing_units      = round(mean(get(est_units_col), na.rm = TRUE), 2),
   avg_net_unit_increase   = round(mean(max_policy_net_add, na.rm = TRUE), 2),
   total_net_units_yielded = sum(max_policy_net_add, na.rm = TRUE)
 )]
@@ -284,7 +297,7 @@ message("   FREQUENT TRANSIT (0.25 MILE TOD) METRICS TABULATION    ")
 message("==========================================================")
 message(sprintf("- Total TOD Qualifying Parcels (<= 0.25 mi): %s", 
                 format(tod_metrics$total_tod_parcels, big.mark = ",")))
-message(sprintf("- Average Existing Units per Lot:           %s units", 
+message(sprintf("- Average Existing Units per Lot:            %s units", 
                 tod_metrics$avg_existing_units))
 message(sprintf("- Average Net Unit Increase (to FAR Cap):   %s units", 
                 tod_metrics$avg_net_unit_increase))
@@ -293,10 +306,10 @@ message(sprintf("- Total Cumulative Net Units Yielded:       %s units",
 message("==========================================================")
 
 # ------------------------------------------------------------------------------
-# 7. Consolidated Tabulations & CSV Export
+# 8. Consolidated Tabulations & CSV Export
 # ------------------------------------------------------------------------------
 dt_summary <- as.data.table(st_drop_geometry(final_transit_sf))
-csv_output_path <- "C:/Users/gmann/Downloads/WA_GIS/Statewide_Capacity_Tabulations_Level_1.csv"
+csv_output_path <- "C:/Users/gmann/Downloads/WA_GIS/Statewide_Capacity_Tabulations_Level_1_Strict_luCodes.csv"
 
 # A. Statewide Overall
 statewide_tab <- dt_summary[, .(
@@ -345,8 +358,7 @@ city_tab <- if ("SITUS_CITY_NM" %in% names(dt_summary)) {
 } else data.table()
 
 # D. 0.25-Mile Frequent Transit TOD Metrics
-est_units_col <- head(intersect(c("est_units", "total_baseline_units"), names(dt_summary)), 1)
-tod_025_dt    <- dt_summary[station_dist_miles <= 0.25]
+tod_025_dt <- dt_summary[station_dist_miles <= 0.25]
 
 tod_tab <- tod_025_dt[, .(
   Aggregation_Level = "Transit (0.25 Mi TOD)",
