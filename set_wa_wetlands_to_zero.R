@@ -1,5 +1,6 @@
 # ==============================================================================
 # Ultra-Efficient Parcel-Wetland & King County Parks Exclusion Masking Pipeline
+# (Updated to integrate with Madeleine's Rail/BRT TOD Buffer Processing)
 # ==============================================================================
 rm(list = ls())
 
@@ -17,7 +18,7 @@ output_path   <- "C:/Users/gmann/Downloads/WA_GIS/Parcels_Fully_Masked.rds"
 message("Loading fully processed parcel dataset...")
 parcels_sf <- readRDS(parcels_path)
 
-# Ensure CRS match (Target WA State Plane South - EPSG:2927 / feet)
+# Ensure CRS match
 target_crs <- st_crs(parcels_sf)
 
 # ------------------------------------------------------------------------------
@@ -44,16 +45,13 @@ parks_sfc <- st_make_valid(parks_sfc)
 parks_sfc <- st_crop(parks_sfc, parcel_bbox)
 
 # ------------------------------------------------------------------------------
-# 3. Optimized Spatial Indexing & Intersection (Avoiding Monolithic Union)
+# 3. Optimized Spatial Indexing & Intersection
 # ------------------------------------------------------------------------------
 message("Building spatial indices and checking intersections separately...")
 
-# Ensure valid geometries
 wetlands_sfc <- st_make_valid(wetlands_sfc)
 parks_sfc    <- st_make_valid(parks_sfc)
 
-# Fast predicate checks leveraging native R-tree spatial indexing
-# Checking them individually avoids the monolithic multi-polygon bottleneck
 message("Checking wetland intersections...")
 touches_wetlands <- lengths(st_intersects(parcels_sf, wetlands_sfc)) > 0
 
@@ -130,5 +128,3 @@ message("  FULLY MASKED STATEWIDE HOUSING CAPACITY SUMMARY (WETLANDS + PARKS)")
 message("==========================================================")
 print(summary_tab)
 message("==========================================================")
-
-beepr::beep()

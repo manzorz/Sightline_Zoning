@@ -1,6 +1,6 @@
 # ==============================================================================
 # WA State Parcel, UGA, & Transit Buffer Spatial Join Pipeline
-# Integrates HB 1110 (Middle Housing) & E2SSB 5466 (TOD FAR Tiers)
+# Integrates HB 1110 (Middle Housing) & E2SSB 5466 / HB 1491 (TOD Buffers)
 # ==============================================================================
 rm(list = ls())
 
@@ -21,6 +21,11 @@ quarter_mile_ft    <- 1320 # 0.25 miles in US Survey Feet
 uga_path           <- "C:/Users/gmann/Documents/WA_GIS/Washington_State_City_Urban_Growth_Areas/Urban_Growth_Areas_2026.shp"
 parcels_path       <- "C:/Users/gmann/Downloads/Current_Parcels_-618300331512082721.gpkg"
 transit_path       <- "C:/Users/gmann/Downloads/WA_GIS/Transit_Stops/Transit_Stops.shp"
+
+# Madeleine's explicit transit buffer paths for TOD analysis
+rail_buffer_path   <- "C:/Users/gmann/Downloads/rail_1491_i/rail_1491_i.shp"
+brt_buffer_path    <- "C:/Users/gmann/Downloads/brt_1491_i/brt_1491_i.shp"
+
 output_path        <- "C:/Users/gmann/Downloads/WA_GIS/Parcels_UGA_Transit_Joined.rds"
 
 ensure_crs <- function(sf_obj, crs = target_crs) {
@@ -84,7 +89,6 @@ gpkg_info    <- st_layers(parcels_path)
 target_layer <- gpkg_info$name[1]
 parcel_crs   <- gpkg_info$crs[[1]]
 
-# Align UGA CRS to parcel native CRS to generate bounding box WKT filter
 uga_native   <- st_transform(uga_sf, parcel_crs)
 uga_wkt_str  <- st_as_text(st_as_sfc(st_bbox(uga_native)))
 
@@ -96,11 +100,9 @@ parcels_sf <- st_read(
   quiet      = TRUE
 )
 
-# Project to target coordinate system
 parcels_sf <- ensure_crs(parcels_sf, target_crs)
 uga_sf     <- ensure_crs(uga_sf, target_crs)
 
-# Strict spatial subset against exact UGA geometry
 parcels_ugb_sf <- st_filter(parcels_sf, uga_sf, .predicate = st_intersects)
 message(sprintf("Parcels inside UGB: %s", format(nrow(parcels_ugb_sf), big.mark = ",")))
 
@@ -110,10 +112,8 @@ message(sprintf("Parcels inside UGB: %s", format(nrow(parcels_ugb_sf), big.mark 
 message("Processing parcel attributes and assigning upzoning tiers...")
 dt <- as.data.table(st_drop_geometry(parcels_ugb_sf))
 
-# Calculate parcel area in acres
 dt[, calc_acres := as.numeric(st_area(parcels_ugb_sf)) / 43560]
 
-# Determine City Column & Normalize
 city_col <- head(intersect(c("SITUS_CITY_NM", "CITY_NM", "Situs City", "CITY_NM.x", 
                              "CITY_NM.y", "Situs_City", "CityName", "UGA_NM"), names(dt)), 1)
 
@@ -123,17 +123,14 @@ if (length(city_col) > 0) {
   dt[, match_city := NA_character_]
 }
 
-# Update join population
 dt[city_pop, pop := i.pop, on = "match_city"]
 dt[is.na(pop), pop := 0L]
 dt[, match_city := NULL]
 
-# Classify HB 1110 Base Upzoning Tiers
 dt[, hb1110_tier := fifelse(pop >= 75000, "Tier 1 (75k+)",
                             fifelse(pop >= 25000, "Tier 2 (25k-75k)",
                                     fifelse(pop > 0, "Tier 3 (<25k)", "Exempt / Unincorporated")))]
 
-# Estimate Baseline Housing Units based on DOR Land Use
 use_col  <- head(intersect(c("LANDUSE_CD", "DOR_CODE", "LAND_USE", "StateLandUse", "PROP_CLASS"), names(dt)), 1)
 unit_col <- head(intersect(c("UNIT_COUNT", "NUM_UNITS", "NO_UNITS", "UNITS"), names(dt)), 1)
 
@@ -149,48 +146,50 @@ if (length(unit_col) > 0) {
 }
 
 # ------------------------------------------------------------------------------
-# 5. Frequent Transit Buffering (0.25 mi & 0.50 mi Tiers)
+# 5. Transit Processing: HB 1110 Frequency Stops vs. Madeleine's TOD Buffers
 # ------------------------------------------------------------------------------
-message("Loading transit stops and generating 0.25-mi and 0.50-mi buffers...")
+message("Loading general transit stops for HB 1110 frequency rules...")
 transit_sf <- st_read(transit_path, quiet = TRUE)
 transit_sf <- ensure_crs(transit_sf, target_crs)
 
-# Identify frequent transit stops (Level 1 & Level 2 Criteria)
 transit_dt <- as.data.table(st_drop_geometry(transit_sf))
 freq_indices <- transit_dt[level1 == "1" | level2 == "1", which = TRUE]
 freq_transit_sf <- transit_sf[freq_indices, ]
 
-# No longer use level 2 -- only level 1 (15-min daytime frequency) -- for qtr (TOD)
-freq_indices_tod <- transit_dt[level1 == "1", which = TRUE]
-freq_trans_tod_sf <- transit_sf[freq_indices_tod, ]
-
-# Create unified 0.25-mile and 0.50-mile spatial buffer rings
-buffer_qtr_sf  <- st_union(st_buffer(freq_trans_tod_sf,
-                                     dist = quarter_mile_ft))
 buffer_half_sf <- st_union(st_buffer(freq_transit_sf, dist = half_mile_ft))
-
-# Intersect parcel centroids or geometries against buffers
-message("Executing transit proximity spatial joins...")
-parcels_in_qtr  <- st_intersects(parcels_ugb_sf, buffer_qtr_sf, sparse = FALSE)[, 1]
-saveRDS(parcels_in_qtr, "C:/Users/gmann/Downloads/WA_GIS/Quarter_Mile_Transit_Parcels_UGA.rds")
-
 parcels_in_half <- st_intersects(parcels_ugb_sf, buffer_half_sf, sparse = FALSE)[, 1]
+
+# Load Madeleine's explicit Rail and BRT buffer shapefiles and fix invalid topologies
+message("Loading and validating Madeleine's Rail and BRT TOD buffers...")
+rail_buf_sf <- st_read(rail_buffer_path, quiet = TRUE)
+brt_buf_sf  <- st_read(brt_buffer_path, quiet = TRUE)
+
+rail_buf_sf <- ensure_crs(rail_buf_sf, target_crs)
+brt_buf_sf  <- ensure_crs(brt_buf_sf, target_crs)
+
+# Clean and repair any geometry issues (self-intersections/slivers)
+rail_buf_sf <- st_make_valid(rail_buf_sf)
+brt_buf_sf  <- st_make_valid(brt_buf_sf)
+
+# Combine and dissolve safely using st_union on the repaired geometries
+tod_buffers_sf <- st_union(c(st_geometry(rail_buf_sf), st_geometry(brt_buf_sf)))
+
+# Check parcel intersections with Madeleine's TOD buffers
+parcels_in_tod <- st_intersects(parcels_ugb_sf, tod_buffers_sf, sparse = FALSE)[, 1]
+
+# Save intermediate flags
 saveRDS(parcels_in_half, "C:/Users/gmann/Downloads/WA_GIS/Half_Mile_Transit_Parcels_UGA.rds")
+saveRDS(parcels_in_tod, "C:/Users/gmann/Downloads/WA_GIS/Madeleine_TOD_Parcels.rds")
 
-# Assign transit spatial attributes
-dt[, near_transit_025 := parcels_in_qtr]
+# Assign attributes
 dt[, near_transit_050 := parcels_in_half]
-dt[, near_transit     := near_transit_050] # Backward compatibility for HB 1110 0.50mi rule
+dt[, near_transit     := near_transit_050] # Backward compatibility for HB 1110
+dt[, near_tod_buffer  := parcels_in_tod]
 
-# Assign station distance tier
-dt[, station_dist_miles := fifelse(near_transit_025 == TRUE, 0.25,
-                                   fifelse(near_transit_050 == TRUE, 0.50, 99.0))]
+# Assign E2SSB 5466 / HB 1491 TOD target FAR based on Madeleine's explicit buffers
+dt[, tod_target_far := fifelse(near_tod_buffer == TRUE, 4.0, 0.0)]
 
-# Assign E2SSB 5466 Target FAR Tiers
-dt[, tod_target_far := fifelse(station_dist_miles <= 0.25, 4.0,
-                               fifelse(station_dist_miles <= 0.50, 2.5, 0.0))]
-
-# Update HB 1110 Max Units Capacity based on 0.50 mi proximity rule
+# Update HB 1110 Max Units Capacity using general frequent transit proximity
 dt[, hb1110_max_units := fifelse(hb1110_tier == "Tier 1 (75k+)" & near_transit_050 == TRUE, 6L,
                                  fifelse(hb1110_tier == "Tier 1 (75k+)", 4L,
                                          fifelse(hb1110_tier == "Tier 2 (25k-75k)" & near_transit_050 == TRUE, 4L,
@@ -200,16 +199,15 @@ dt[, hb1110_max_units := fifelse(hb1110_tier == "Tier 1 (75k+)" & near_transit_0
 # ------------------------------------------------------------------------------
 # 6. Re-attach Processed Attributes & Export Final Spatial RDS
 # ------------------------------------------------------------------------------
-parcels_ugb_sf$calc_acres         <- dt$calc_acres
-parcels_ugb_sf$pop                <- dt$pop
-parcels_ugb_sf$hb1110_tier        <- dt$hb1110_tier
-parcels_ugb_sf$est_units          <- dt$est_units
-parcels_ugb_sf$near_transit_025   <- dt$near_transit_025
-parcels_ugb_sf$near_transit_050   <- dt$near_transit_050
-parcels_ugb_sf$near_transit       <- dt$near_transit
-parcels_ugb_sf$station_dist_miles <- dt$station_dist_miles
-parcels_ugb_sf$tod_target_far     <- dt$tod_target_far
-parcels_ugb_sf$hb1110_max_units   <- dt$hb1110_max_units
+parcels_ugb_sf$calc_acres        <- dt$calc_acres
+parcels_ugb_sf$pop               <- dt$pop
+parcels_ugb_sf$hb1110_tier       <- dt$hb1110_tier
+parcels_ugb_sf$est_units         <- dt$est_units
+parcels_ugb_sf$near_transit_050  <- dt$near_transit_050
+parcels_ugb_sf$near_transit      <- dt$near_transit
+parcels_ugb_sf$near_tod_buffer   <- dt$near_tod_buffer
+parcels_ugb_sf$tod_target_far    <- dt$tod_target_far
+parcels_ugb_sf$hb1110_max_units  <- dt$hb1110_max_units
 
 message(sprintf("Saving final processed dataset (%s parcels) to %s...", 
                 format(nrow(parcels_ugb_sf), big.mark = ","), output_path))
@@ -243,8 +241,10 @@ p <- ggplot(data = parcels_ugb_sf) +
   labs(
     title    = "Washington State HB 1110 Middle Housing Capacity",
     subtitle = sprintf("Joined Dataset: %s Urban Parcels", format(nrow(parcels_ugb_sf), big.mark = ",")),
-    caption  = "Source: WA Geoservices Parcels & OFM Population Estimates"
+    caption  = "Source: WA Geoservices Parcels & Madeleine's TOD Buffers"
   )
 
 print(p)
 message("Pipeline run complete.")
+
+beepr::beep(6)
