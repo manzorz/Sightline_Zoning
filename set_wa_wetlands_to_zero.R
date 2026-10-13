@@ -96,8 +96,8 @@ saveRDS(parcels_sf, output_path)
 message(sprintf("Updated masked parcels saved to: %s", output_path))
 
 message("Writing updated non-zero impact layer to GeoPackage for QGIS...")
-nonzero_dt <- dt[max_policy_net_add > 0]
-nonzero_sf <- st_as_sf(nonzero_dt)
+# Subset the sf object directly to preserve geometry class attributes safely
+nonzero_sf <- parcels_sf[parcels_sf$max_policy_net_add > 0, ]
 
 if (st_crs(nonzero_sf)$epsg != 2927) {
   nonzero_sf <- st_transform(nonzero_sf, crs = 2927)

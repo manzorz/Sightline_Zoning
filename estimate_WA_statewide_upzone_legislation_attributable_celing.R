@@ -202,10 +202,8 @@ stories_map <- ggplot(final_transit_sf) +
 ggsave(vector_pdf_path, plot = stories_map, width = 11, height = 8.5, device = cairo_pdf)
 message(sprintf("Vector PDF successfully written to: %s", vector_pdf_path))
 
-# Convert sf to data.table temporarily for ultra-fast filtering
-transit_dt <- as.data.table(final_transit_sf)
-nonzero_dt <- transit_dt[net_tod_add > 0]
-nonzero_transit_sf <- st_as_sf(nonzero_dt)
+# Filter spatial object directly without dropping class attributes
+nonzero_transit_sf <- final_transit_sf[final_transit_sf$net_tod_add > 0, ]
 nonzero_transit_projected <- st_transform(nonzero_transit_sf, crs = 2927)
 
 st_write(
