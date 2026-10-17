@@ -1,5 +1,5 @@
 # ==============================================================================
-# Complete Transit & Housing Capacity Model (Vector PDF Pipeline Only)
+# Complete Transit & Housing Capacity Model (Fully Restored + Acreage & MF Filters)
 # ==============================================================================
 rm(list = ls())
 
@@ -14,12 +14,11 @@ input_path       <- "C:/Users/gmann/Downloads/WA_GIS/Parcels_UGA_Transit_Joined.
 output_path      <- "C:/Users/gmann/Downloads/WA_GIS/Parcels_Fully_Processed.rds"
 vector_pdf_path  <- "C:/Users/gmann/Downloads/WA_GIS/Statewide_Capacity_Vector.pdf"
 
-# Modeling Parameters
-avg_unit_sqft                 <- 850
+# Modeling Parameters & Realistic Economic Thresholds
+avg_unit_sqft                 <- 1000
 sqm_to_sqft                   <- 10.7639
-net_efficiency_factor         <- 0.75
-max_lot_coverage              <- 0.55
-max_redev_parcel_sqft         <- 217800
+max_redev_parcel_acres        <- 2.0   # Exclude lots larger than 2 acres (shipyards, parks, etc.)
+max_redev_parcel_sqft         <- max_redev_parcel_acres * 43560
 min_buildable_footprint_sqft  <- 1000
 
 message("Loading joined spatial transit-parcel dataset...")
@@ -49,11 +48,14 @@ if (!"parcel_sqft" %in% names(dt)) {
   dt[, parcel_sqft := as.numeric(st_area(final_transit_sf)) * sqm_to_sqft]
 }
 dt[is.na(parcel_sqft) | is.nan(parcel_sqft), parcel_sqft := 0]
+
+# Acreage filter flag for massive parcels (> 2 acres)
+dt[, is_too_large := parcel_sqft > max_redev_parcel_sqft]
 dt[, eff_parcel_sqft := pmin(parcel_sqft, max_redev_parcel_sqft)]
 dt[, tot_area_m      := eff_parcel_sqft / sqm_to_sqft]
 
 # ------------------------------------------------------------------------------
-# 3. Baseline Attributes & Built-Up Flag (High-Hanging Fruit Exclusion)
+# 3. Baseline Attributes & Built-Up / Economic Feasibility Flag
 # ------------------------------------------------------------------------------
 dt[, imputed_units := fifelse(lu_code %in% c(11, 14, 18, 19), 1L,
                               fifelse(lu_code == 12, 3L,
@@ -77,8 +79,9 @@ if ("IMP_VAL" %in% names(dt) && "LND_VAL" %in% names(dt)) {
   dt[, imp_land_ratio := 0.0]
 }
 
-# High-Hanging Fruit Flag
-dt[, is_built_up := fifelse(current_far > 0.75 | imp_land_ratio > 3.0 | total_baseline_units >= 4, TRUE, FALSE)]
+# Enhanced Built-Up Flag: Exclude parcels with existing substantial MF (>=2 units), 
+# high current FAR (> 0.15), high improvement-to-land ratios, or oversized acreage (> 2 acres).
+dt[, is_built_up := fifelse(current_far > 0.15 | imp_land_ratio > 1.5 | total_baseline_units >= 2 | is_too_large == TRUE, TRUE, FALSE)]
 dt[is.na(is_built_up), is_built_up := FALSE]
 
 # ------------------------------------------------------------------------------
@@ -102,16 +105,15 @@ if ("hb1110_max_units" %in% names(dt)) {
      cap_hb1110 := pmax(total_baseline_units, as.integer(hb1110_max_units))]
 }
 
-# TOD FAR Calculations
+# TOD FAR Calculations (Direct net FAR delta formula multiplied by parcel area)
 dt[, far_delta := pmax(0.0, tod_target_far - current_far, na.rm = TRUE)]
 dt[, tod_gross_sqft := 0.0]
 dt[lu_code %in% strict_buildable_set & 
      is_built_up == FALSE & 
      tod_target_far > 0 & 
-     eff_parcel_sqft >= 3000 & 
-     (eff_parcel_sqft * max_lot_coverage) >= min_buildable_footprint_sqft & 
-     imp_land_ratio < 1.0, 
-   tod_gross_sqft := far_delta * tot_area_m * sqm_to_sqft * max_lot_coverage * net_efficiency_factor]
+     parcel_sqft >= 3000 & 
+     parcel_sqft <= max_redev_parcel_sqft, 
+   tod_gross_sqft := far_delta * parcel_sqft]
 
 dt[, cap_tod := pmax(total_baseline_units, as.integer(tod_gross_sqft / avg_unit_sqft))]
 
@@ -133,6 +135,30 @@ dt[!(lu_code %in% strict_buildable_set), `:=`(
 )]
 
 # ------------------------------------------------------------------------------
+# 4.5. Realistic Market Feasibility & Municipal Scale Height Caps
+# ------------------------------------------------------------------------------
+# Scale maximum allowable net unit additions based on city population tier 
+# and transit proximity to prevent absurd theoretical high-rise spikes (e.g., 300+ units)
+# Assuming ~850 sqft per unit:
+# - Tier 1 TOD (Seattle/Bellevue rail/BRT): Cap at ~35 units (~4-5 stories on small lots)
+# - Tier 2/3 TOD or General: Cap at ~16 to 24 units (~2-3 stories)
+
+dt[, max_unit_cap_per_parcel := fcase(
+  pop >= 75000 & near_tod_buffer == TRUE, 40L,  # Max ~4-5 stories in major metro TOD
+  pop >= 75000 & near_transit_050 == TRUE, 30L, # Max ~3-4 stories in major metro frequent transit
+  pop >= 25000, 20L,                           # Max ~2-3 stories in mid-sized cities
+  default = 12L                                # Max ~1-2 stories in smaller municipalities
+)]
+
+# Apply the cap to the net policy additions
+dt[, net_1337_add := pmin(net_1337_add, max_unit_cap_per_parcel)]
+dt[, net_tod_add  := pmin(net_tod_add, max_unit_cap_per_parcel)]
+dt[, net_1110_add := pmin(net_1110_add, max_unit_cap_per_parcel)]
+
+# Recalculate total net buildout with the realistic caps in place
+dt[, max_policy_net_add := fifelse(is_built_up == TRUE, 0L, pmin(max_unit_cap_per_parcel, net_1337_add + net_tod_add + net_1110_add))]
+
+# ------------------------------------------------------------------------------
 # 5. Story Bins Categorization
 # ------------------------------------------------------------------------------
 dt[, story_bin := fcase(
@@ -149,7 +175,7 @@ dt[, story_bin := fcase(
 story_levels <- c("Built-Up (High-Hanging)", "0 Stories (No Net Add)", "2 Stories", "3-4 Stories", "5-6 Stories", "6-9 Stories", "10-15 Stories", "20+ Stories")
 dt[, story_bin := factor(story_bin, levels = story_levels)]
 
-# Bind calculated fields back to spatial object
+# Bind calculated fields back to spatial object safely
 if (length(id_col) > 0) {
   final_transit_sf <- unique(as.data.table(final_transit_sf), by = id_col)
   final_transit_sf <- st_as_sf(final_transit_sf)
