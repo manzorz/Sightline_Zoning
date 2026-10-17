@@ -1,0 +1,12 @@
+name: shiny_viewer
+title: shiny_viewer
+username: mannyga
+account: mannyga
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 18203446
+bundleId:
+url: https://mannyga.shinyapps.io/shiny_viewer/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
