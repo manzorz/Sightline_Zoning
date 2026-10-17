@@ -4,9 +4,7 @@ username: mannyga
 account: mannyga
 server: shinyapps.io
 hostUrl: https://api.shinyapps.io/v1
-appId: 18203446
-bundleId:
+appId: 18203923
+bundleId: 12702435
 url: https://mannyga.shinyapps.io/shiny_viewer/
 version: 1
-asMultiple: FALSE
-asStatic: FALSE

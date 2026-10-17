@@ -119,7 +119,7 @@ server <- function(input, output, session) {
       "&bull; HB 1337 (ADUs): +", df$net_1337_add, "<br>",
       "&bull; E2SSB 5466 (TOD): +", df$net_tod_add, "<br>",
       "&bull; HB 1110 (Middle Housing): +", df$net_1110_add, "<br>",
-      "<b>Total Net Capacity: +</b>", <b>df$max_policy_net_add,</b> "<br>",
+      "<b>Total Net Capacity: +", df$max_policy_net_add, "</b><br>",
       "<b>Story Tier:</b> ", as.character(df$story_bin),
       "</div>"
     )
